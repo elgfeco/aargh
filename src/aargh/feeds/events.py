@@ -15,9 +15,17 @@ class EventType(Enum):
     BOMB_PLANTED = "bomb_planted"
     BOMB_DEFUSED = "bomb_defused"
     BOMB_EXPLODED = "bomb_exploded"
-    OBJECTIVE = "objective"  # Roshan, tower, barracks (Dota2)
+    OBJECTIVE = "objective"
     ECONOMY_UPDATE = "economy_update"
     GOLD_UPDATE = "gold_update"
+    # Mid-round CS2 events
+    PLAYER_COUNT_UPDATE = "player_count_update"
+    CLUTCH_SITUATION = "clutch_situation"
+    # Dota2 objectives
+    ROSHAN_KILL = "roshan_kill"
+    TOWER_DESTROY = "tower_destroy"
+    BARRACKS_DESTROY = "barracks_destroy"
+    AEGIS_PICKUP = "aegis_pickup"
 
 
 class WinCondition(Enum):
@@ -56,6 +64,20 @@ class GameEvent:
     team_b_economy: int | None = None
     gold_lead: int | None = None  # positive = team_a leads
     xp_lead: int | None = None
+
+    # Mid-round CS2 state
+    team_a_alive: int | None = None  # Players alive (0-5)
+    team_b_alive: int | None = None
+    bomb_planted: bool = False
+    bomb_site: str | None = None  # "A" or "B"
+    is_pistol_round: bool = False
+    is_eco_round: bool = False  # team buying is on eco/force
+
+    # Dota2 objectives
+    objective_type: str | None = None  # "roshan", "tower", "barracks", "ancient"
+    objective_tier: int | None = None  # Tower tier (1-4) or barracks type
+    roshan_number: int | None = None  # Which Roshan kill (1st, 2nd, 3rd...)
+    aegis_holder: str | None = None  # team_a or team_b
 
     # Metadata
     best_of: int = 3

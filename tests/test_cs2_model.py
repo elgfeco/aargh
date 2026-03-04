@@ -2,7 +2,10 @@
 
 from aargh.feeds.events import EventType, GameEvent
 from aargh.market.models import GammaMarket, TrackedMarket
-from aargh.signals.cs2_model import CS2Model, map_win_prob, series_win_prob
+from aargh.signals.cs2_model import (
+    CS2Model, map_win_prob, series_win_prob,
+    _economy_adjusted_p, _player_count_adjusted_p, _bomb_adjusted_p,
+)
 
 
 def _make_market(yes_price: float = 0.5) -> TrackedMarket:
@@ -136,3 +139,127 @@ class TestCS2Model:
         )
         signal = model.evaluate(event, market)
         assert signal is None
+
+    def test_economy_update_eco_disadvantage(self):
+        model = CS2Model()
+        market = _make_market(0.5)
+        event = GameEvent(
+            event_type=EventType.ECONOMY_UPDATE,
+            match_id="match-1",
+            team_a_rounds=5,
+            team_b_rounds=5,
+            team_a_economy=5000,  # Eco
+            team_b_economy=30000,  # Full buy
+        )
+        signal = model.evaluate(event, market)
+        assert signal is not None
+        assert signal.model_prob < 0.5  # Team A on eco, should be disadvantaged
+
+    def test_bomb_planted_shifts_probability(self):
+        model = CS2Model()
+        market = _make_market(0.5)
+        event = GameEvent(
+            event_type=EventType.BOMB_PLANTED,
+            match_id="match-1",
+            team_a_rounds=6,
+            team_b_rounds=6,
+            winning_side="team_a",  # Team A planted
+        )
+        signal = model.evaluate(event, market)
+        assert signal is not None
+        assert signal.model_prob > 0.5  # Team A planted, slight advantage
+
+    def test_player_count_advantage(self):
+        model = CS2Model()
+        market = _make_market(0.5)
+        event = GameEvent(
+            event_type=EventType.PLAYER_COUNT_UPDATE,
+            match_id="match-1",
+            team_a_rounds=6,
+            team_b_rounds=6,
+            team_a_alive=5,
+            team_b_alive=2,
+        )
+        signal = model.evaluate(event, market)
+        assert signal is not None
+        assert signal.model_prob > 0.5  # 5v2, team A should be heavily favored
+
+    def test_clutch_situation(self):
+        model = CS2Model()
+        market = _make_market(0.5)
+        event = GameEvent(
+            event_type=EventType.CLUTCH_SITUATION,
+            match_id="match-1",
+            team_a_rounds=6,
+            team_b_rounds=6,
+            team_a_alive=1,
+            team_b_alive=3,
+        )
+        signal = model.evaluate(event, market)
+        assert signal is not None
+        assert signal.model_prob < 0.5  # 1v3, team A heavily disadvantaged
+        assert signal.confidence >= 0.5
+
+
+class TestEconomyAdjustments:
+    def test_eco_vs_full_buy(self):
+        event = GameEvent(
+            event_type=EventType.ECONOMY_UPDATE, match_id="m1",
+            team_a_economy=5000, team_b_economy=30000,
+        )
+        p = _economy_adjusted_p(event)
+        assert p < 0.3  # Eco team wins ~25%
+
+    def test_force_vs_full_buy(self):
+        event = GameEvent(
+            event_type=EventType.ECONOMY_UPDATE, match_id="m1",
+            team_a_economy=15000, team_b_economy=30000,
+        )
+        p = _economy_adjusted_p(event)
+        assert 0.3 < p < 0.5
+
+    def test_pistol_round(self):
+        event = GameEvent(
+            event_type=EventType.ECONOMY_UPDATE, match_id="m1",
+            is_pistol_round=True,
+        )
+        p = _economy_adjusted_p(event)
+        assert p == 0.5
+
+    def test_equal_buys(self):
+        event = GameEvent(
+            event_type=EventType.ECONOMY_UPDATE, match_id="m1",
+            team_a_economy=30000, team_b_economy=30000,
+        )
+        p = _economy_adjusted_p(event)
+        assert p == 0.5
+
+
+class TestPlayerCountAdjustments:
+    def test_5v5_no_change(self):
+        assert _player_count_adjusted_p(0.5, 5, 5) == 0.5
+
+    def test_5v3_advantage(self):
+        p = _player_count_adjusted_p(0.5, 5, 3)
+        assert p > 0.5
+
+    def test_1v5_severe_disadvantage(self):
+        p = _player_count_adjusted_p(0.5, 1, 5)
+        assert p < 0.15
+
+    def test_all_dead_returns_zero(self):
+        assert _player_count_adjusted_p(0.5, 0, 3) == 0.0
+        assert _player_count_adjusted_p(0.5, 3, 0) == 1.0
+
+
+class TestBombAdjustments:
+    def test_no_bomb_no_change(self):
+        assert _bomb_adjusted_p(0.5, False, None) == 0.5
+
+    def test_team_a_plant_increases(self):
+        p = _bomb_adjusted_p(0.5, True, "team_a")
+        assert p > 0.5
+
+    def test_team_b_plant_decreases(self):
+        p = _bomb_adjusted_p(0.5, True, "team_b")
+        assert p < 0.5

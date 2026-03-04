@@ -1,8 +1,13 @@
-"""CS2 win probability model based on round scores.
+"""CS2 win probability model based on round scores, economy, and mid-round state.
 
 Uses dynamic programming to compute P(team A wins map) given current round
-scores in MR12 format (first to 13 rounds). Combines map probabilities
-into series (Bo1/Bo3/Bo5) probabilities.
+scores in MR12 format (first to 13 rounds). Adjusts probabilities for:
+- Bomb plant situations (post-plant advantage)
+- Economy state (eco/force vs full buy)
+- Player count advantage (clutch situations)
+- Pistol round significance
+
+Combines map probabilities into series (Bo1/Bo3/Bo5) probabilities.
 """
 
 from __future__ import annotations
@@ -18,6 +23,22 @@ from aargh.signals.base_model import BaseSignalModel, Signal
 logger = logging.getLogger(__name__)
 
 ROUNDS_TO_WIN = 13  # MR12 format
+
+# Economy thresholds (approximate team equipment value in $)
+ECO_THRESHOLD = 10000  # Below this, team is on eco
+FORCE_THRESHOLD = 18000  # Below this, team is on a force buy
+FULL_BUY_THRESHOLD = 25000  # Above this, team has a full buy
+
+# Per-round win probability adjustments
+ECO_DISADVANTAGE = 0.25  # Team on eco wins ~25% of rounds
+FORCE_DISADVANTAGE = 0.38  # Team on force wins ~38% of rounds
+PISTOL_VOLATILITY = 0.50  # Pistol rounds are close to 50/50 regardless
+
+# Bomb plant shifts
+BOMB_PLANTED_SHIFT = 0.12  # Planting team gains ~12% win probability for the round
+
+# Player count advantage (per player advantage)
+PLAYER_ADVANTAGE_PER_PLAYER = 0.10  # Each extra player adds ~10% round win probability
 
 
 @lru_cache(maxsize=1024)
@@ -44,9 +65,8 @@ def map_win_prob(score_a: int, score_b: int, p: float = 0.5) -> float:
         if score_a == score_b:
             return 0.5
         if score_a > score_b:
-            # Team A needs fewer rounds - slight advantage
             diff = score_a - score_b
-            return 0.5 + diff * 0.1  # rough approximation, capped at 1.0
+            return 0.5 + diff * 0.1
         diff = score_b - score_a
         return max(0.0, 0.5 - diff * 0.1)
     # Normal play: recurse
@@ -55,30 +75,18 @@ def map_win_prob(score_a: int, score_b: int, p: float = 0.5) -> float:
 
 @lru_cache(maxsize=256)
 def series_win_prob(maps_a: int, maps_b: int, current_map_prob: float, best_of: int) -> float:
-    """Probability that team A wins a best-of-N series.
-
-    Args:
-        maps_a: Maps won by team A so far.
-        maps_b: Maps won by team B so far.
-        current_map_prob: Probability team A wins the current map.
-        best_of: Series format (1, 3, or 5).
-    """
-    maps_needed = (best_of + 1) // 2  # Maps needed to win (2 for Bo3, 3 for Bo5)
+    """Probability that team A wins a best-of-N series."""
+    maps_needed = (best_of + 1) // 2
 
     if maps_a >= maps_needed:
         return 1.0
     if maps_b >= maps_needed:
         return 0.0
 
-    # If team A wins current map: maps_a + 1
-    # If team A loses current map: maps_b + 1
-    # For future maps, assume 50/50 (no map-by-map prediction)
     future_map_prob = 0.5
-
     p_win_current = current_map_prob
     p_lose_current = 1.0 - current_map_prob
 
-    # After current map is decided, compute remaining series probability
     prob_if_win = _remaining_series_prob(maps_a + 1, maps_b, maps_needed, future_map_prob)
     prob_if_lose = _remaining_series_prob(maps_a, maps_b + 1, maps_needed, future_map_prob)
 
@@ -96,8 +104,61 @@ def _remaining_series_prob(maps_a: int, maps_b: int, maps_needed: int, p: float)
            (1 - p) * _remaining_series_prob(maps_a, maps_b + 1, maps_needed, p)
 
 
+def _economy_adjusted_p(event: GameEvent) -> float:
+    """Adjust per-round win probability based on economy state."""
+    p = 0.5
+
+    if event.is_pistol_round:
+        return PISTOL_VOLATILITY
+
+    eco_a = event.team_a_economy or 0
+    eco_b = event.team_b_economy or 0
+
+    if eco_a > 0 and eco_b > 0:
+        if eco_a < ECO_THRESHOLD and eco_b >= FULL_BUY_THRESHOLD:
+            p = ECO_DISADVANTAGE
+        elif eco_a < FORCE_THRESHOLD and eco_b >= FULL_BUY_THRESHOLD:
+            p = FORCE_DISADVANTAGE
+        elif eco_b < ECO_THRESHOLD and eco_a >= FULL_BUY_THRESHOLD:
+            p = 1.0 - ECO_DISADVANTAGE
+        elif eco_b < FORCE_THRESHOLD and eco_a >= FULL_BUY_THRESHOLD:
+            p = 1.0 - FORCE_DISADVANTAGE
+    elif event.is_eco_round:
+        p = ECO_DISADVANTAGE
+
+    return p
+
+
+def _player_count_adjusted_p(base_p: float, alive_a: int, alive_b: int) -> float:
+    """Adjust round win probability based on players alive."""
+    if alive_a <= 0 and alive_b <= 0:
+        return base_p
+    if alive_a <= 0:
+        return 0.0
+    if alive_b <= 0:
+        return 1.0
+
+    advantage = alive_a - alive_b
+    adjustment = advantage * PLAYER_ADVANTAGE_PER_PLAYER
+    return max(0.02, min(0.98, base_p + adjustment))
+
+
+def _bomb_adjusted_p(base_p: float, bomb_planted: bool, planting_side: str | None) -> float:
+    """Adjust round win probability based on bomb plant status."""
+    if not bomb_planted:
+        return base_p
+    if planting_side == "team_a":
+        return min(0.98, base_p + BOMB_PLANTED_SHIFT)
+    elif planting_side == "team_b":
+        return max(0.02, base_p - BOMB_PLANTED_SHIFT)
+    return base_p
+
+
 class CS2Model(BaseSignalModel):
-    """CS2-specific probability model using round score tables."""
+    """CS2-specific probability model using round scores, economy, and mid-round state."""
+
+    def __init__(self):
+        self._last_round_p: dict[str, float] = {}
 
     @property
     def game(self) -> str:
@@ -110,6 +171,12 @@ class CS2Model(BaseSignalModel):
             return self._on_map_ended(event, market)
         if event.event_type == EventType.SERIES_ENDED:
             return self._on_series_ended(event, market)
+        if event.event_type == EventType.ECONOMY_UPDATE:
+            return self._on_economy_update(event, market)
+        if event.event_type == EventType.BOMB_PLANTED:
+            return self._on_bomb_planted(event, market)
+        if event.event_type in (EventType.PLAYER_COUNT_UPDATE, EventType.CLUTCH_SITUATION):
+            return self._on_player_count(event, market)
         return None
 
     def _on_round_ended(self, event: GameEvent, market: TrackedMarket) -> Signal:
@@ -118,27 +185,101 @@ class CS2Model(BaseSignalModel):
         maps_a = event.team_a_maps or 0
         maps_b = event.team_b_maps or 0
 
-        # Current map win probability
         current_map_prob = map_win_prob(score_a, score_b)
-
-        # Overall series probability
         model_prob = series_win_prob(maps_a, maps_b, current_map_prob, market.best_of)
-
         market_prob = market.yes_price
-        edge = model_prob - market_prob
-
-        logger.debug(
-            "CS2 signal: %s [%d-%d] map %d-%d | model=%.3f market=%.3f edge=%+.3f",
-            market.market.question[:40], score_a, score_b, maps_a, maps_b,
-            model_prob, market_prob, edge,
-        )
 
         return Signal(
             market=market,
             model_prob=model_prob,
             market_prob=market_prob,
-            edge=edge,
+            edge=model_prob - market_prob,
             confidence=0.8,
+            event=event,
+            timestamp=datetime.now(timezone.utc),
+        )
+
+    def _on_economy_update(self, event: GameEvent, market: TrackedMarket) -> Signal:
+        """Economy differential signal - eco rounds won only ~25% of the time."""
+        score_a = event.team_a_rounds or 0
+        score_b = event.team_b_rounds or 0
+        maps_a = event.team_a_maps or 0
+        maps_b = event.team_b_maps or 0
+
+        p = _economy_adjusted_p(event)
+        self._last_round_p[event.match_id] = p
+
+        current_map_prob = map_win_prob(score_a, score_b, p)
+        model_prob = series_win_prob(maps_a, maps_b, current_map_prob, market.best_of)
+        market_prob = market.yes_price
+
+        confidence = 0.7 if abs(p - 0.5) > 0.1 else 0.5
+
+        return Signal(
+            market=market,
+            model_prob=model_prob,
+            market_prob=market_prob,
+            edge=model_prob - market_prob,
+            confidence=confidence,
+            event=event,
+            timestamp=datetime.now(timezone.utc),
+        )
+
+    def _on_bomb_planted(self, event: GameEvent, market: TrackedMarket) -> Signal:
+        """Bomb plant gives planting team ~62% chance to win round."""
+        score_a = event.team_a_rounds or 0
+        score_b = event.team_b_rounds or 0
+        maps_a = event.team_a_maps or 0
+        maps_b = event.team_b_maps or 0
+
+        base_p = self._last_round_p.get(event.match_id, 0.5)
+        p = _bomb_adjusted_p(base_p, True, event.winning_side)
+
+        current_map_prob = map_win_prob(score_a, score_b, p)
+        model_prob = series_win_prob(maps_a, maps_b, current_map_prob, market.best_of)
+        market_prob = market.yes_price
+
+        return Signal(
+            market=market,
+            model_prob=model_prob,
+            market_prob=market_prob,
+            edge=model_prob - market_prob,
+            confidence=0.65,
+            event=event,
+            timestamp=datetime.now(timezone.utc),
+        )
+
+    def _on_player_count(self, event: GameEvent, market: TrackedMarket) -> Signal:
+        """Player count differential mid-round. 5v3 shifts probability significantly."""
+        score_a = event.team_a_rounds or 0
+        score_b = event.team_b_rounds or 0
+        maps_a = event.team_a_maps or 0
+        maps_b = event.team_b_maps or 0
+        alive_a = event.team_a_alive if event.team_a_alive is not None else 5
+        alive_b = event.team_b_alive if event.team_b_alive is not None else 5
+
+        base_p = self._last_round_p.get(event.match_id, 0.5)
+        p = _player_count_adjusted_p(base_p, alive_a, alive_b)
+
+        if event.bomb_planted:
+            p = _bomb_adjusted_p(p, True, event.winning_side)
+
+        current_map_prob = map_win_prob(score_a, score_b, p)
+        model_prob = series_win_prob(maps_a, maps_b, current_map_prob, market.best_of)
+        market_prob = market.yes_price
+
+        player_diff = abs(alive_a - alive_b)
+        confidence = min(0.85, 0.5 + player_diff * 0.1)
+
+        if event.event_type == EventType.CLUTCH_SITUATION:
+            confidence = min(0.9, confidence + 0.1)
+
+        return Signal(
+            market=market,
+            model_prob=model_prob,
+            market_prob=market_prob,
+            edge=model_prob - market_prob,
+            confidence=confidence,
             event=event,
             timestamp=datetime.now(timezone.utc),
         )
@@ -146,8 +287,6 @@ class CS2Model(BaseSignalModel):
     def _on_map_ended(self, event: GameEvent, market: TrackedMarket) -> Signal:
         maps_a = event.team_a_maps or 0
         maps_b = event.team_b_maps or 0
-
-        # Map just ended, use 50/50 for next map
         model_prob = series_win_prob(maps_a, maps_b, 0.5, market.best_of)
         market_prob = market.yes_price
 
@@ -162,7 +301,6 @@ class CS2Model(BaseSignalModel):
         )
 
     def _on_series_ended(self, event: GameEvent, market: TrackedMarket) -> Signal:
-        # Series is over - probability is 1.0 or 0.0
         model_prob = 1.0 if event.winning_side == "team_a" else 0.0
         market_prob = market.yes_price
 

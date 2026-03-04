@@ -31,6 +31,13 @@ class Config:
     max_exposure_pct: float = 0.25
     min_edge: float = 0.05
 
+    # Arbitrage
+    arb_min_profit_pct: float = 0.5
+    stale_threshold_s: float = 30.0
+
+    # Stream monitoring
+    stream_poll_interval: int = 10
+
     # Bot
     dry_run: bool = True
     scan_interval: int = 60
@@ -53,6 +60,9 @@ class Config:
             kelly_fraction=float(os.getenv("KELLY_FRACTION", str(cls.kelly_fraction))),
             max_exposure_pct=float(os.getenv("MAX_EXPOSURE_PCT", str(cls.max_exposure_pct))),
             min_edge=float(os.getenv("MIN_EDGE", str(cls.min_edge))),
+            arb_min_profit_pct=float(os.getenv("ARB_MIN_PROFIT_PCT", str(cls.arb_min_profit_pct))),
+            stale_threshold_s=float(os.getenv("STALE_THRESHOLD_S", str(cls.stale_threshold_s))),
+            stream_poll_interval=int(os.getenv("STREAM_POLL_INTERVAL", str(cls.stream_poll_interval))),
             dry_run=os.getenv("DRY_RUN", "true").lower() in ("true", "1", "yes"),
             scan_interval=int(os.getenv("SCAN_INTERVAL", str(cls.scan_interval))),
             log_level=os.getenv("LOG_LEVEL", cls.log_level),

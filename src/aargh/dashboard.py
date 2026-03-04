@@ -30,11 +30,19 @@ class Dashboard:
         self._recent_signals: list[Signal] = []
         self._recent_trades: list[BetOrder] = []
         self._portfolio: Portfolio | None = None
+        self._arb_detector = None
+        self._timing_tracker = None
         self._live: Live | None = None
         self._max_recent = 15
 
     def set_portfolio(self, portfolio: Portfolio) -> None:
         self._portfolio = portfolio
+
+    def set_arb_detector(self, arb_detector) -> None:
+        self._arb_detector = arb_detector
+
+    def set_timing_tracker(self, timing_tracker) -> None:
+        self._timing_tracker = timing_tracker
 
     def update_markets(self, markets: list[TrackedMarket]) -> None:
         self._markets = markets
@@ -61,7 +69,7 @@ class Dashboard:
         layout.split_column(
             Layout(self._render_header(), size=3),
             Layout(name="main"),
-            Layout(self._render_portfolio(), size=6),
+            Layout(name="bottom", size=9),
         )
         layout["main"].split_row(
             Layout(self._render_markets(), ratio=1),
@@ -70,6 +78,11 @@ class Dashboard:
         layout["main"]["right"].split_column(
             Layout(self._render_events(), ratio=1),
             Layout(self._render_signals(), ratio=1),
+        )
+        layout["bottom"].split_row(
+            Layout(self._render_portfolio(), ratio=1),
+            Layout(self._render_arbitrage(), ratio=1),
+            Layout(self._render_timing(), ratio=1),
         )
         return layout
 
@@ -136,17 +149,64 @@ class Dashboard:
             return Panel("No portfolio data", title="Portfolio")
 
         p = self._portfolio
-        parts = [
-            f"Bets: {p.total_bets}",
-            f"W/L: {p.wins}/{p.losses}",
-            f"Win Rate: {p.win_rate:.0%}",
-            f"Realized P&L: ${p.total_pnl:+.2f}",
-            f"Unrealized P&L: ${p.unrealized_pnl:+.2f}",
-            f"Open: {len(p.open_positions)}",
+        lines = [
+            f"Bets: {p.total_bets}  W/L: {p.wins}/{p.losses}  Rate: {p.win_rate:.0%}",
+            f"Realized: ${p.total_pnl:+.2f}  Unrealized: ${p.unrealized_pnl:+.2f}",
+            f"Open positions: {len(p.open_positions)}",
         ]
-        text = "  |  ".join(parts)
         color = "green" if p.total_pnl >= 0 else "red"
-        return Panel(Text(text, style=f"bold {color}"), title="Portfolio", border_style=color)
+        return Panel(
+            Text("\n".join(lines), style=f"bold {color}"),
+            title="Portfolio",
+            border_style=color,
+        )
+
+    def _render_arbitrage(self) -> Panel:
+        lines: list[str] = []
+        if self._arb_detector:
+            opps = self._arb_detector.active_opportunities
+            if opps:
+                for opp in opps[:4]:
+                    color = "green" if opp.is_actionable else "yellow"
+                    lines.append(
+                        f"[{color}]{opp.arb_type}[/{color}] "
+                        f"{opp.expected_profit_pct:.1f}% "
+                        f"(conf={opp.confidence:.0%}) "
+                        f"{opp.description[:40]}"
+                    )
+            else:
+                lines.append("[dim]No arbitrage opportunities detected[/dim]")
+        else:
+            lines.append("[dim]Arbitrage detector not active[/dim]")
+
+        return Panel("\n".join(lines), title="Arbitrage", border_style="magenta")
+
+    def _render_timing(self) -> Panel:
+        lines: list[str] = []
+        if self._timing_tracker:
+            # Feed latency stats
+            for name, stats in self._timing_tracker.all_feed_stats.items():
+                lines.append(
+                    f"[cyan]{name}[/cyan] "
+                    f"avg={stats.avg_latency_ms:.0f}ms "
+                    f"p95={stats.p95_latency_ms:.0f}ms "
+                    f"({stats.sample_count}x)"
+                )
+            # Edge windows
+            for match_id, edge in self._timing_tracker.all_edge_windows.items():
+                color = "green" if edge.has_edge else "red"
+                lines.append(
+                    f"[{color}]Edge {edge.edge_window_s:.1f}s[/{color}] "
+                    f"({edge.edge_quality}) "
+                    f"API={edge.api_latency_s:.1f}s "
+                    f"stream={edge.stream_delay_s:.0f}s"
+                )
+            if not lines:
+                lines.append("[dim]Collecting timing data...[/dim]")
+        else:
+            lines.append("[dim]Timing tracker not active[/dim]")
+
+        return Panel("\n".join(lines[:5]), title="Timing Edge", border_style="blue")
 
     def print_startup(self) -> None:
         """Print startup banner."""
