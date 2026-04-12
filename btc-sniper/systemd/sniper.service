@@ -13,6 +13,10 @@ Group=sniper
 WorkingDirectory=/opt/btc-sniper
 EnvironmentFile=/opt/btc-sniper/.env
 
+# Headless mode — no TUI when running as a service
+Environment=ENABLE_TUI=false
+Environment=RUST_LOG=info,sniper=debug
+
 # Binary installed by setup.sh
 ExecStart=/usr/local/bin/sniper
 ExecStop=/bin/kill -SIGTERM $MAINPID
@@ -29,16 +33,20 @@ CPUSchedulingPriority=99
 IOSchedulingClass=realtime
 IOSchedulingPriority=0
 
-# Pin to isolated trading cores (matches setup.sh ISOLATED_CORES)
-CPUAffinity=4-63
+# Pin to isolated trading cores (matches setup.sh ISOLATED_CORES).
+# Adjust for your instance size: c6g.medium=2 cores, c7gn.xlarge=4 cores.
+# CPUAffinity=2-3        # 4-core instance
+# CPUAffinity=4-63       # 64-core c7gn.16xlarge
+CPUAffinity=1
 
 # Memory
 LimitNOFILE=1048576
 LimitMEMLOCK=infinity
 LimitRTPRIO=99
 LimitNICE=-20
-MemoryMax=96G
-MemoryHigh=80G
+# Adjust for your instance size (96G for c7gn.16xlarge, 2G for c6g.medium)
+MemoryMax=2G
+MemoryHigh=1G
 OOMScoreAdjust=-1000
 
 # Don't let the kernel swap us

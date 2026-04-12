@@ -37,7 +37,7 @@ use anyhow::{anyhow, Context as _, Result};
 use futures::{SinkExt, StreamExt};
 use tokio::time::sleep;
 use tokio_tungstenite::tungstenite::protocol::Message;
-use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::connect_async;
 use tracing::{debug, error, info, warn};
 use url::Url;
 
@@ -393,21 +393,6 @@ fn bytes32_to_decimal(bytes: &[u8; 32]) -> String {
     if trimmed.is_empty() { "0".into() } else { trimmed.into() }
 }
 
-fn hex_encode(bytes: &[u8; 32]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut s = String::with_capacity(64);
-    for &b in bytes {
-        s.push(HEX[(b >> 4) as usize] as char);
-        s.push(HEX[(b & 0xf) as usize] as char);
-    }
-    s
-}
-
-// Unused but kept for potential future use in the executor crate.
-#[allow(dead_code)]
-pub(crate) fn unused_ws_type() -> WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>> {
-    unreachable!()
-}
 
 #[cfg(test)]
 mod tests {

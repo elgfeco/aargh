@@ -5,7 +5,6 @@
 //! This module auto-discovers the current active set so the bot can
 //! subscribe to their WS feeds without hardcoded condition IDs.
 
-use anyhow::Result;
 use serde::Deserialize;
 use tracing::{debug, info, warn};
 
