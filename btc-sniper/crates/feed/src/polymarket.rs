@@ -116,7 +116,7 @@ impl PolymarketFeed {
             .await
             .context("connect_async failed")?;
 
-        // Subscribe payload.
+        // Subscribe payload — send token IDs as hex (0x-prefixed).
         let asset_hex: Vec<String> = self
             .assets
             .iter()
@@ -127,21 +127,30 @@ impl PolymarketFeed {
             "channel": "market",
             "assets_ids": asset_hex,
         });
+        debug!(payload = %sub, "polymarket subscribe");
         ws.send(Message::text(sub.to_string())).await?;
         info!(assets = self.assets.len(), "polymarket WS connected and subscribed");
 
         let mut last_ping = Instant::now();
         let mut scratch: Vec<u8> = Vec::with_capacity(16 * 1024);
+        let mut frame_count: u64 = 0;
 
         while let Some(msg) = ws.next().await {
             let msg = msg.context("ws recv failed")?;
             match msg {
                 Message::Text(t) => {
+                    frame_count += 1;
+                    if frame_count <= 3 {
+                        debug!(frame = frame_count, len = t.len(),
+                            preview = &t[..t.len().min(300)],
+                            "polymarket raw frame");
+                    }
                     scratch.clear();
                     scratch.extend_from_slice(t.as_bytes());
                     self.dispatch_frame(&mut scratch)?;
                 }
                 Message::Binary(b) => {
+                    frame_count += 1;
                     scratch.clear();
                     scratch.extend_from_slice(&b);
                     self.dispatch_frame(&mut scratch)?;
