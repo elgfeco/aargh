@@ -9,28 +9,18 @@
 # At startup, `cargo run` resolves each slug/condition to its active token IDs.
 # =============================================================================
 
+# "Will Bitcoin reach $100,000 by December 31, 2026?"
+# bid=0.35 ask=0.36 as of 2026-04-12
+# YES token: 56078938060096976448086754249497300447360333783952000147427828224794011030104
+# NO  token: 11291662904897713174667903388388696640643610556195928998276904135282270136756
 [[market]]
-name       = "BTC-EOD"
-slug       = "will-btc-close-above-target-today"
-# Fill in the real condition_id before going live
-condition_id = "0x0000000000000000000000000000000000000000000000000000000000000000"
-# Target price in USDC (integer) — e.g. 70000 for "BTC > $70k at close"
-target     = 70000
-# Market resolution timestamp (Unix seconds). Used by risk/exit logic.
-resolves_at = 0
-# How many BPS of edge are required to fire (overrides global MIN_EDGE_BPS)
+name       = "BTC-100k-2026"
+slug       = "what-price-will-bitcoin-hit-before-2027"
+condition_id = "0xdaa4866bae18be58c5a79d2aeeffd035ec78f1bb49dbd88f72993997778a990f"
+target     = 100000
+resolves_at = 1798761600  # 2026-12-31T12:00:00Z
 min_edge_bps = 250
-# Max USDC exposed to this market at any time
 max_position_usdc = 500
-
-[[market]]
-name       = "BTC-EOW"
-slug       = "will-btc-close-above-target-this-week"
-condition_id = "0x0000000000000000000000000000000000000000000000000000000000000000"
-target     = 72000
-resolves_at = 0
-min_edge_bps = 300
-max_position_usdc = 750
 
 # --- Global knobs ------------------------------------------------------------
 [defaults]
