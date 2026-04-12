@@ -91,14 +91,13 @@ ssh $SSH_OPTS "$HOST" "sudo mkdir -p $REMOTE_DIR/{logs,state,config} && sudo cho
 # ---------------------------------------------------------------------------
 log "syncing files to $HOST:$REMOTE_DIR..."
 
-RSYNC_OPTS="-az --progress"
-[[ -n "$SSH_KEY" ]] && RSYNC_OPTS="$RSYNC_OPTS -e 'ssh -i $SSH_KEY'"
+RSH="ssh $SSH_OPTS"
 
 # Binary
-rsync $RSYNC_OPTS "$BINARY" "$HOST:$REMOTE_DIR/sniper"
+rsync -az --progress -e "$RSH" "$BINARY" "$HOST:$REMOTE_DIR/sniper"
 
 # Config and systemd
-rsync $RSYNC_OPTS \
+rsync -az --progress -e "$RSH" \
     .env.example \
     systemd/sniper.service \
     setup.sh \
@@ -106,7 +105,7 @@ rsync $RSYNC_OPTS \
 
 # If .env exists locally, sync it (but don't overwrite remote .env)
 if [[ -f .env ]]; then
-    rsync $RSYNC_OPTS --ignore-existing .env "$HOST:$REMOTE_DIR/.env"
+    rsync -az --progress --ignore-existing -e "$RSH" .env "$HOST:$REMOTE_DIR/.env"
     log "synced .env (won't overwrite existing remote .env)"
 fi
 
