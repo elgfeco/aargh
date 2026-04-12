@@ -116,16 +116,17 @@ impl PolymarketFeed {
             .await
             .context("connect_async failed")?;
 
-        // Subscribe payload — send token IDs as hex (0x-prefixed).
-        let asset_hex: Vec<String> = self
+        // Subscribe payload — send token IDs as decimal strings (Polymarket
+        // WS expects decimal, not hex).
+        let asset_ids: Vec<String> = self
             .assets
             .iter()
-            .map(|a| format!("0x{}", hex_encode(a)))
+            .map(|a| bytes32_to_decimal(a))
             .collect();
         let sub = serde_json::json!({
             "type": "subscribe",
             "channel": "market",
-            "assets_ids": asset_hex,
+            "assets_ids": asset_ids,
         });
         debug!(payload = %sub, "polymarket subscribe");
         ws.send(Message::text(sub.to_string())).await?;
@@ -259,7 +260,10 @@ fn parse_one(v: &simd_json::OwnedValue) -> Result<Option<PolymarketMessage>> {
         .unwrap_or("");
     let asset = match parse_hex32(asset_hex) {
         Some(a) => a,
-        None => return Ok(None),
+        None => match crate::discovery::decimal_to_bytes32(asset_hex) {
+            Some(a) => a,
+            None => return Ok(None),
+        },
     };
 
     let ts_ms = obj
@@ -358,6 +362,35 @@ fn parse_changes(v: Option<&simd_json::OwnedValue>) -> Result<(Vec<(Price, Size)
         }
     }
     Ok((bids, asks))
+}
+
+/// Convert a 32-byte big-endian array to a decimal string. Inverse of
+/// `discovery::decimal_to_bytes32`.
+fn bytes32_to_decimal(bytes: &[u8; 32]) -> String {
+    // Simple big-integer base conversion: repeatedly divide by 10.
+    let mut tmp = *bytes;
+    let mut digits = Vec::with_capacity(80);
+    loop {
+        let mut remainder: u16 = 0;
+        let mut all_zero = true;
+        for byte in tmp.iter_mut() {
+            let val = (remainder << 8) | (*byte as u16);
+            *byte = (val / 10) as u8;
+            remainder = val % 10;
+            if *byte != 0 {
+                all_zero = false;
+            }
+        }
+        digits.push(b'0' + remainder as u8);
+        if all_zero {
+            break;
+        }
+    }
+    digits.reverse();
+    // Skip leading zeros, but keep at least one digit
+    let s = String::from_utf8(digits).unwrap_or_else(|_| "0".into());
+    let trimmed = s.trim_start_matches('0');
+    if trimmed.is_empty() { "0".into() } else { trimmed.into() }
 }
 
 fn hex_encode(bytes: &[u8; 32]) -> String {
