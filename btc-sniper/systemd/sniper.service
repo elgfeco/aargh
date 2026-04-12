@@ -33,11 +33,10 @@ CPUSchedulingPriority=99
 IOSchedulingClass=realtime
 IOSchedulingPriority=0
 
-# Pin to isolated trading cores (matches setup.sh ISOLATED_CORES).
-# Adjust for your instance size: c6g.medium=2 cores, c7gn.xlarge=4 cores.
-# CPUAffinity=2-3        # 4-core instance
-# CPUAffinity=4-63       # 64-core c7gn.16xlarge
-CPUAffinity=1
+# Pin to isolated trading cores (uncomment and adjust for your instance).
+# CPUAffinity=1            # 2-core instance (c6g.medium)
+# CPUAffinity=2-3          # 4-core instance
+# CPUAffinity=4-63         # 64-core c7gn.16xlarge
 
 # Memory
 LimitNOFILE=1048576
