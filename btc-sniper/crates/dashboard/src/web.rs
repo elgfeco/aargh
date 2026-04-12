@@ -315,35 +315,39 @@ async fn api_wallet(State(deps): State<AppState>) -> Json<WalletResponse> {
         });
     }
 
-    // Query Polymarket CLOB for balance
-    let url = format!(
-        "{}/balance?address={}",
-        deps.clob_host, deps.wallet_address
+    // Query USDC balance on Polygon via public RPC (balanceOf on USDC contract).
+    // USDC on Polygon: 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174
+    // balanceOf(address) selector: 0x70a08231
+    let addr_padded = format!(
+        "0x000000000000000000000000{}",
+        deps.wallet_address.trim_start_matches("0x")
     );
-    match deps.http.get(&url).send().await {
+    let rpc_body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "eth_call",
+        "params": [{
+            "to": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+            "data": format!("0x70a08231{}", &addr_padded[2..])
+        }, "latest"]
+    });
+
+    let rpc_url = "https://polygon-rpc.com";
+    match deps.http.post(rpc_url).json(&rpc_body).send().await {
         Ok(resp) => {
             if let Ok(text) = resp.text().await {
-                // Response is typically a JSON number or {"balance": "123456"}
-                // Try parsing as a plain number first, then as JSON
-                if let Ok(atoms) = text.trim().trim_matches('"').parse::<f64>() {
-                    return Json(WalletResponse {
-                        address: deps.wallet_address.clone(),
-                        usdc_balance: Some(atoms / 1_000_000.0),
-                        error: None,
-                    });
-                }
-                // Try JSON object
                 #[derive(serde::Deserialize)]
-                struct BalResp {
-                    #[serde(default)]
-                    balance: Option<String>,
+                struct RpcResp {
+                    result: Option<String>,
                 }
-                if let Ok(parsed) = serde_json::from_str::<BalResp>(&text) {
-                    if let Some(b) = parsed.balance {
-                        if let Ok(atoms) = b.parse::<f64>() {
+                if let Ok(parsed) = serde_json::from_str::<RpcResp>(&text) {
+                    if let Some(hex) = parsed.result {
+                        let hex = hex.trim_start_matches("0x");
+                        if let Ok(atoms) = u128::from_str_radix(hex, 16) {
+                            // USDC has 6 decimals on Polygon
                             return Json(WalletResponse {
                                 address: deps.wallet_address.clone(),
-                                usdc_balance: Some(atoms / 1_000_000.0),
+                                usdc_balance: Some(atoms as f64 / 1_000_000.0),
                                 error: None,
                             });
                         }
@@ -352,7 +356,7 @@ async fn api_wallet(State(deps): State<AppState>) -> Json<WalletResponse> {
                 Json(WalletResponse {
                     address: deps.wallet_address.clone(),
                     usdc_balance: None,
-                    error: Some(format!("unexpected response: {}", &text[..text.len().min(100)])),
+                    error: Some("failed to parse RPC response".into()),
                 })
             } else {
                 Json(WalletResponse {
@@ -365,7 +369,7 @@ async fn api_wallet(State(deps): State<AppState>) -> Json<WalletResponse> {
         Err(e) => Json(WalletResponse {
             address: deps.wallet_address.clone(),
             usdc_balance: None,
-            error: Some(format!("request failed: {e}")),
+            error: Some(format!("RPC request failed: {e}")),
         }),
     }
 }
