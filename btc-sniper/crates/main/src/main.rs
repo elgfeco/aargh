@@ -29,7 +29,7 @@ use sniper_executor::{
     ClobClient, LatencyStage, LatencyStats, OrderManager, OrderManagerConfig, OrderTemplate,
 };
 use sniper_feed::{
-    discover_btc_markets, AssetId, BinanceFeed,
+    discover_btc_markets, AssetId, BinanceFeed, CoinbaseFeed,
     MarketState, PolymarketFeed, Side as FeedSide,
 };
 use sniper_risk::{AssetIndex, RiskEngine, RiskLimits, RiskVerdict};
@@ -347,13 +347,26 @@ async fn main() -> Result<()> {
         info!(count = addrs.count(), "resolved polymarket DNS at startup");
     }
 
-    // --- spawn Binance feed (always on) ------------------------------------
+    // --- spawn BTC reference feeds ------------------------------------------
+    // Coinbase is the primary feed (works on AWS; Binance blocks cloud IPs).
+    // Both feeds write to the same BtcTape, so whichever connects first wins.
     let poly_url = env_str(
         "POLYMARKET_WS",
         "wss://ws-subscriptions-clob.polymarket.com/ws/market",
     );
+    let coinbase_url = env_str("COINBASE_WS", "wss://advanced-trade-ws.coinbase.com");
     let binance_url = env_str("BINANCE_WS", "wss://stream.binance.com:9443/ws/btcusdt@trade");
     let gamma_base = env_str("GAMMA_API", "https://gamma-api.polymarket.com");
+
+    let coinbase = Arc::new(CoinbaseFeed::new(&coinbase_url, state.clone())?);
+    tokio::spawn({
+        let c = coinbase.clone();
+        async move {
+            if let Err(e) = c.run_forever().await {
+                error!(error = %e, "coinbase feed exited");
+            }
+        }
+    });
 
     let binance = Arc::new(BinanceFeed::new(&binance_url, state.clone())?);
     tokio::spawn({
