@@ -128,6 +128,7 @@ impl PolymarketFeed {
             "assets_ids": asset_hex,
         });
         ws.send(Message::text(sub.to_string())).await?;
+        info!(assets = self.assets.len(), "polymarket WS connected and subscribed");
 
         let mut last_ping = Instant::now();
         let mut scratch: Vec<u8> = Vec::with_capacity(16 * 1024);

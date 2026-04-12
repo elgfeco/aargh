@@ -70,9 +70,12 @@ impl BinanceFeed {
         let (mut ws, _) = connect_async(self.url.as_str())
             .await
             .context("connect_async")?;
+        info!(source = self.source.as_str(), "BTC feed connected");
 
         let mut scratch = Vec::with_capacity(4096);
         let mut last_ping = Instant::now();
+        let mut frame_count: u64 = 0;
+        let mut last_status = Instant::now();
         while let Some(msg) = ws.next().await {
             let msg = msg.context("ws recv")?;
             match msg {
@@ -96,6 +99,22 @@ impl BinanceFeed {
                 Message::Pong(_) => {}
                 Message::Close(_) => return Ok(()),
                 Message::Frame(_) => {}
+            }
+
+            frame_count += 1;
+            if last_status.elapsed() > Duration::from_secs(10) {
+                let snap = self.state.tape().snapshot();
+                info!(
+                    source = self.source.as_str(),
+                    frames = frame_count,
+                    btc_price = format_args!("{:.2}", snap.last_price),
+                    trades = snap.trade_count,
+                    ema_fast = format_args!("{:.2}", snap.ema_fast),
+                    ema_slow = format_args!("{:.2}", snap.ema_slow),
+                    momentum = format_args!("{:.4}", snap.momentum),
+                    "BTC tape status"
+                );
+                last_status = Instant::now();
             }
 
             if last_ping.elapsed() > Duration::from_secs(15) {

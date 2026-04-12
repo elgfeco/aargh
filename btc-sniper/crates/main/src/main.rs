@@ -114,6 +114,8 @@ async fn signal_loop(
     // Re-evaluate every 5ms — the book/tape mutate asynchronously.
     let mut tick = interval(Duration::from_millis(5));
     let mut shutdown = shutdown;
+    let mut last_status = Instant::now();
+    let mut eval_count: u64 = 0;
     loop {
         tokio::select! {
             _ = tick.tick() => {}
@@ -122,6 +124,23 @@ async fn signal_loop(
             }
         }
         let tape = state.tape().snapshot();
+        eval_count += 1;
+
+        // Log status every 10 seconds
+        if last_status.elapsed() > Duration::from_secs(10) {
+            let msgs = state.messages_total();
+            info!(
+                evals = eval_count,
+                ws_messages = msgs,
+                btc_trades = tape.trade_count,
+                btc_price = format_args!("{:.2}", tape.last_price),
+                momentum = format_args!("{:.4}", tape.momentum),
+                assets = assets.len(),
+                "signal loop status"
+            );
+            last_status = Instant::now();
+        }
+
         for asset in &assets {
             let book = state.book(*asset);
             let book_snap = book.snapshot();
