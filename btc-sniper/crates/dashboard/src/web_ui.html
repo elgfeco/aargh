@@ -183,8 +183,20 @@ tr:last-child td{border-bottom:none}
     </div>
   </div>
 
-  <!-- STRATEGY + LATENCY stacked -->
+  <!-- WALLET + STRATEGY + LATENCY stacked -->
   <div style="display:flex;flex-direction:column;gap:12px">
+    <!-- WALLET -->
+    <div class="panel">
+      <div class="panel-head">Polymarket Wallet</div>
+      <div class="panel-body" id="wallet-body">
+        <div class="strat-grid">
+          <div class="strat-item"><span class="k">Address</span><span class="v" id="w-addr" style="font-size:10px;word-break:break-all">—</span></div>
+          <div class="strat-item"><span class="k">USDC Balance</span><span class="v" id="w-bal" style="font-size:16px;font-weight:700;color:var(--bright)">—</span></div>
+        </div>
+        <div id="w-error" style="color:var(--yellow);font-size:11px;margin-top:6px"></div>
+      </div>
+    </div>
+
     <!-- STRATEGY -->
     <div class="panel">
       <div class="panel-head">Strategy</div>
@@ -241,15 +253,20 @@ async function fetchJson(url) {
   return r.json();
 }
 
+let walletTick = 0;
 async function refresh() {
   try {
-    const [status, book, orders, latency, logs] = await Promise.all([
+    const fetches = [
       fetchJson('/api/status'),
       fetchJson('/api/book'),
       fetchJson('/api/orders'),
       fetchJson('/api/latency'),
       fetchJson('/api/logs'),
-    ]);
+    ];
+    // Fetch wallet every 10s (not every 1s)
+    if (walletTick % 10 === 0) fetches.push(fetchJson('/api/wallet'));
+    walletTick++;
+    const [status, book, orders, latency, logs, wallet] = await Promise.all(fetches);
     S = status;
     renderHeader(status);
     renderBook(book);
@@ -257,6 +274,7 @@ async function refresh() {
     renderOrders(orders, status);
     renderStrategy(status);
     renderLatency(latency);
+    if (wallet) renderWallet(wallet);
     renderLogs(logs);
     $('foot-conn').textContent = 'connected';
     $('foot-conn').style.color = 'var(--green)';
@@ -426,6 +444,20 @@ function renderLogs(logs) {
   }
   el.innerHTML = html;
   if (wasAtBottom) el.scrollTop = el.scrollHeight;
+}
+
+function renderWallet(w) {
+  const addr = w.address || '—';
+  $('w-addr').textContent = addr.length > 10 ? addr.slice(0,6) + '...' + addr.slice(-4) : addr;
+  $('w-addr').title = addr;
+  if (w.usdc_balance != null) {
+    $('w-bal').textContent = '$' + w.usdc_balance.toFixed(2);
+    $('w-bal').style.color = w.usdc_balance > 0 ? 'var(--bright)' : 'var(--red)';
+    $('w-error').textContent = '';
+  } else {
+    $('w-bal').textContent = '—';
+    $('w-error').textContent = w.error || '';
+  }
 }
 
 function escHtml(s) {

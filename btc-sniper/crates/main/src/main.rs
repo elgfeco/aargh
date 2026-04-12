@@ -500,7 +500,7 @@ async fn main() -> Result<()> {
         .timeout(Duration::from_secs(10))
         .build()?;
     tokio::spawn(discovery_loop(
-        http,
+        http.clone(),
         gamma_base,
         poly_url,
         state.clone(),
@@ -592,6 +592,9 @@ async fn main() -> Result<()> {
             maker_quote_size_usdc: env_parse("QUOTE_SIZE_USDC", 100.0f64),
             maker_max_inventory_usdc: env_parse("MAX_INVENTORY_USDC", 500.0f64),
             dry_run,
+            wallet_address: owner.clone(),
+            clob_host: env_str("POLYMARKET_HOST", "https://clob.polymarket.com"),
+            http: http.clone(),
         };
         let bind = web_bind.clone();
         tokio::spawn(async move {

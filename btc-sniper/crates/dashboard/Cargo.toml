@@ -16,6 +16,7 @@ ratatui    = { workspace = true }
 crossterm  = { workspace = true }
 axum       = { workspace = true }
 tower-http = { workspace = true }
+reqwest    = { workspace = true }
 
 parking_lot = { workspace = true }
 arc-swap    = { workspace = true }

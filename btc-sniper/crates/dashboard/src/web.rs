@@ -45,6 +45,9 @@ pub struct WebDeps {
     pub maker_quote_size_usdc: f64,
     pub maker_max_inventory_usdc: f64,
     pub dry_run: bool,
+    pub wallet_address: String,
+    pub clob_host: String,
+    pub http: reqwest::Client,
 }
 
 type AppState = Arc<WebDeps>;
@@ -294,6 +297,79 @@ async fn api_kill(State(deps): State<AppState>) -> Json<ActionResponse> {
     })
 }
 
+#[derive(Serialize)]
+struct WalletResponse {
+    address: String,
+    usdc_balance: Option<f64>,
+    error: Option<String>,
+}
+
+async fn api_wallet(State(deps): State<AppState>) -> Json<WalletResponse> {
+    if deps.wallet_address.is_empty()
+        || deps.wallet_address == "0x0000000000000000000000000000000000000000"
+    {
+        return Json(WalletResponse {
+            address: deps.wallet_address.clone(),
+            usdc_balance: None,
+            error: Some("no wallet configured".into()),
+        });
+    }
+
+    // Query Polymarket CLOB for balance
+    let url = format!(
+        "{}/balance?address={}",
+        deps.clob_host, deps.wallet_address
+    );
+    match deps.http.get(&url).send().await {
+        Ok(resp) => {
+            if let Ok(text) = resp.text().await {
+                // Response is typically a JSON number or {"balance": "123456"}
+                // Try parsing as a plain number first, then as JSON
+                if let Ok(atoms) = text.trim().trim_matches('"').parse::<f64>() {
+                    return Json(WalletResponse {
+                        address: deps.wallet_address.clone(),
+                        usdc_balance: Some(atoms / 1_000_000.0),
+                        error: None,
+                    });
+                }
+                // Try JSON object
+                #[derive(serde::Deserialize)]
+                struct BalResp {
+                    #[serde(default)]
+                    balance: Option<String>,
+                }
+                if let Ok(parsed) = serde_json::from_str::<BalResp>(&text) {
+                    if let Some(b) = parsed.balance {
+                        if let Ok(atoms) = b.parse::<f64>() {
+                            return Json(WalletResponse {
+                                address: deps.wallet_address.clone(),
+                                usdc_balance: Some(atoms / 1_000_000.0),
+                                error: None,
+                            });
+                        }
+                    }
+                }
+                Json(WalletResponse {
+                    address: deps.wallet_address.clone(),
+                    usdc_balance: None,
+                    error: Some(format!("unexpected response: {}", &text[..text.len().min(100)])),
+                })
+            } else {
+                Json(WalletResponse {
+                    address: deps.wallet_address.clone(),
+                    usdc_balance: None,
+                    error: Some("failed to read response".into()),
+                })
+            }
+        }
+        Err(e) => Json(WalletResponse {
+            address: deps.wallet_address.clone(),
+            usdc_balance: None,
+            error: Some(format!("request failed: {e}")),
+        }),
+    }
+}
+
 // ── Router ──────────────────────────────────────────────────────────────────
 
 pub async fn run_web_dashboard(deps: WebDeps, bind: &str) -> anyhow::Result<()> {
@@ -306,6 +382,7 @@ pub async fn run_web_dashboard(deps: WebDeps, bind: &str) -> anyhow::Result<()> 
         .route("/api/orders", get(api_orders))
         .route("/api/latency", get(api_latency))
         .route("/api/logs", get(api_logs))
+        .route("/api/wallet", get(api_wallet))
         .route("/api/pause", post(api_pause))
         .route("/api/kill", post(api_kill))
         .layer(CorsLayer::permissive())
