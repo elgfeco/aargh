@@ -587,6 +587,10 @@ async fn main() -> Result<()> {
                 edge: edge.clone(),
                 shutdown: shutdown_tx.clone(),
                 started_at: started,
+                maker_mode,
+                maker_half_spread_bps: env_parse("HALF_SPREAD_BPS", 150i32),
+                maker_quote_size_usdc: env_parse("QUOTE_SIZE_USDC", 100.0f64),
+                maker_max_inventory_usdc: env_parse("MAX_INVENTORY_USDC", 500.0f64),
             };
             if let Err(e) = run_dashboard(deps).await {
                 error!(error = %e, "dashboard exited");

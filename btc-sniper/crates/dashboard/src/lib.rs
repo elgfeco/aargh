@@ -1,15 +1,21 @@
 //! # sniper-dashboard
 //!
-//! Ratatui terminal dashboard — 4-panel layout refreshing at 20 FPS (50ms):
+//! Ratatui terminal dashboard — 6-panel layout with header/footer, 20 FPS:
 //!
 //! ```text
-//! ┌─────────────────────────────┬──────────────┐
-//! │  ORDER BOOK (YES / NO)      │  SIGNAL      │
-//! ├─────────────────────────────┤              │
-//! │  POSITIONS                  ├──────────────┤
-//! ├─────────────────────────────┤  LATENCY     │
-//! │  LOG STREAM                 │              │
-//! └─────────────────────────────┴──────────────┘
+//! ┌─────────────────────────────────────────────────────────────────┐
+//! │  HEADER — mode · status · BTC price · uptime · ws/fills count  │
+//! ├────────────────────────────────────┬────────────────────────────┤
+//! │  ORDER BOOK                        │  BTC FEED                 │
+//! ├────────────────────────────────────┤  (tape stats + momentum)  │
+//! │  ORDERS / POSITIONS                ├────────────────────────────┤
+//! │                                    │  STRATEGY                 │
+//! ├────────────────────────────────────┤  (maker/taker + PnL)      │
+//! │  LOG STREAM                        ├────────────────────────────┤
+//! │                                    │  LATENCY                  │
+//! ├────────────────────────────────────┴────────────────────────────┤
+//! │  FOOTER — [q] quit  [p] pause  [k] kill switch                 │
+//! └────────────────────────────────────────────────────────────────-┘
 //! ```
 //!
 //! Keyboard:
