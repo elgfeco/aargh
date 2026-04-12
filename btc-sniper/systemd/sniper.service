@@ -1,0 +1,67 @@
+[Unit]
+Description=BTC Polymarket Sniper Bot
+Documentation=file:///opt/btc-sniper/README.md
+After=network-online.target chrony.service
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=sniper
+Group=sniper
+WorkingDirectory=/opt/btc-sniper
+EnvironmentFile=/opt/btc-sniper/.env
+
+# Binary installed by setup.sh
+ExecStart=/usr/local/bin/sniper
+ExecStop=/bin/kill -SIGTERM $MAINPID
+
+# Graceful shutdown: give the executor 10s to cancel open orders
+KillSignal=SIGTERM
+TimeoutStopSec=10
+Restart=always
+RestartSec=2
+
+# Priority: SCHED_FIFO real-time with max priority
+CPUSchedulingPolicy=fifo
+CPUSchedulingPriority=99
+IOSchedulingClass=realtime
+IOSchedulingPriority=0
+
+# Pin to isolated trading cores (matches setup.sh ISOLATED_CORES)
+CPUAffinity=4-63
+
+# Memory
+LimitNOFILE=1048576
+LimitMEMLOCK=infinity
+LimitRTPRIO=99
+LimitNICE=-20
+MemoryMax=96G
+MemoryHigh=80G
+OOMScoreAdjust=-1000
+
+# Don't let the kernel swap us
+MemoryDenyWriteExecute=false
+
+# Hardening (tight but compatible with tokio + reqwest)
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/btc-sniper/logs /opt/btc-sniper/state
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=false
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictNamespaces=true
+
+# Structured JSON logs to journald (tracing-subscriber JSON format)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sniper
+
+[Install]
+WantedBy=multi-user.target

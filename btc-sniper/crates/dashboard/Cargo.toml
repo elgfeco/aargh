@@ -1,0 +1,24 @@
+[package]
+name         = "sniper-dashboard"
+version      = { workspace = true }
+edition      = { workspace = true }
+rust-version = { workspace = true }
+description  = "Ratatui TUI dashboard"
+
+[dependencies]
+sniper-feed     = { workspace = true }
+sniper-signal   = { workspace = true }
+sniper-executor = { workspace = true }
+sniper-risk     = { workspace = true }
+
+tokio     = { workspace = true }
+ratatui   = { workspace = true }
+crossterm = { workspace = true }
+
+parking_lot = { workspace = true }
+arc-swap    = { workspace = true }
+
+rust_decimal = { workspace = true }
+
+tracing   = { workspace = true }
+anyhow    = { workspace = true }

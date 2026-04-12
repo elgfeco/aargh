@@ -1,0 +1,21 @@
+[package]
+name         = "sniper-signal"
+version      = { workspace = true }
+edition      = { workspace = true }
+rust-version = { workspace = true }
+description  = "Edge detection, momentum, Kelly sizing"
+
+[dependencies]
+sniper-feed = { workspace = true }
+
+tokio      = { workspace = true }
+crossbeam  = { workspace = true }
+parking_lot = { workspace = true }
+arc-swap   = { workspace = true }
+
+rust_decimal = { workspace = true }
+
+tracing    = { workspace = true }
+anyhow     = { workspace = true }
+thiserror  = { workspace = true }
+once_cell  = { workspace = true }

@@ -1,0 +1,42 @@
+# =============================================================================
+# markets.toml — BTC end-of-day / end-of-week condition IDs to monitor.
+#
+# Polymarket BTC markets are listed at:
+#   https://polymarket.com/markets?tag=crypto
+# Find the condition ID via the Gamma API:
+#   curl 'https://gamma-api.polymarket.com/markets?slug=will-btc-close-above-xyz'
+#
+# At startup, `cargo run` resolves each slug/condition to its active token IDs.
+# =============================================================================
+
+[[market]]
+name       = "BTC-EOD"
+slug       = "will-btc-close-above-target-today"
+# Fill in the real condition_id before going live
+condition_id = "0x0000000000000000000000000000000000000000000000000000000000000000"
+# Target price in USDC (integer) — e.g. 70000 for "BTC > $70k at close"
+target     = 70000
+# Market resolution timestamp (Unix seconds). Used by risk/exit logic.
+resolves_at = 0
+# How many BPS of edge are required to fire (overrides global MIN_EDGE_BPS)
+min_edge_bps = 250
+# Max USDC exposed to this market at any time
+max_position_usdc = 500
+
+[[market]]
+name       = "BTC-EOW"
+slug       = "will-btc-close-above-target-this-week"
+condition_id = "0x0000000000000000000000000000000000000000000000000000000000000000"
+target     = 72000
+resolves_at = 0
+min_edge_bps = 300
+max_position_usdc = 750
+
+# --- Global knobs ------------------------------------------------------------
+[defaults]
+# How often to resync the book from REST as a safety net
+book_resync_ms = 30_000
+# WS ping interval
+ping_interval_ms = 5_000
+# How many recent trades to keep for VWAP
+vwap_window_secs = 60

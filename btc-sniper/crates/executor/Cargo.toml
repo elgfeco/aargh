@@ -1,0 +1,39 @@
+[package]
+name         = "sniper-executor"
+version      = { workspace = true }
+edition      = { workspace = true }
+rust-version = { workspace = true }
+description  = "Polymarket CLOB order placement, cancellation, fill tracking"
+
+[dependencies]
+sniper-feed   = { workspace = true }
+sniper-signal = { workspace = true }
+
+tokio             = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures           = { workspace = true }
+reqwest           = { workspace = true }
+url               = { workspace = true }
+
+simd-json  = { workspace = true }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+
+dashmap     = { workspace = true }
+parking_lot = { workspace = true }
+crossbeam   = { workspace = true }
+
+ethers           = { workspace = true }
+alloy-primitives = { workspace = true }
+
+rust_decimal = { workspace = true }
+
+hex   = { workspace = true }
+sha2  = { workspace = true }
+rand  = { workspace = true }
+
+tracing      = { workspace = true }
+hdrhistogram = { workspace = true }
+anyhow       = { workspace = true }
+thiserror    = { workspace = true }
+bytes        = { workspace = true }
