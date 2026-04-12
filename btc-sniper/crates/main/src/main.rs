@@ -24,7 +24,7 @@ use tokio::time::{interval, sleep};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
-use sniper_dashboard::{run_dashboard, DashboardDeps, LogRing};
+use sniper_dashboard::{run_dashboard, run_web_dashboard, DashboardDeps, LogRing, WebDeps};
 use sniper_executor::{
     ClobClient, LatencyStage, LatencyStats, OrderManager, OrderManagerConfig, OrderTemplate,
 };
@@ -573,9 +573,36 @@ async fn main() -> Result<()> {
         }
     });
 
-    // --- dashboard or plain idle ------------------------------------------
-    let enable_tui = env_bool("ENABLE_TUI", true);
+    // --- web dashboard (headless, for remote access) -----------------------
+    let enable_web = env_bool("ENABLE_WEB", false);
+    let web_bind = env_str("WEB_BIND", "0.0.0.0:8080");
     let started = Instant::now();
+
+    if enable_web {
+        let web_deps = WebDeps {
+            state: state.clone(),
+            manager: manager.clone(),
+            risk: risk.clone(),
+            stats: stats.clone(),
+            logs: logs.clone(),
+            edge: edge.clone(),
+            started_at: started,
+            maker_mode,
+            maker_half_spread_bps: env_parse("HALF_SPREAD_BPS", 150i32),
+            maker_quote_size_usdc: env_parse("QUOTE_SIZE_USDC", 100.0f64),
+            maker_max_inventory_usdc: env_parse("MAX_INVENTORY_USDC", 500.0f64),
+            dry_run,
+        };
+        let bind = web_bind.clone();
+        tokio::spawn(async move {
+            if let Err(e) = run_web_dashboard(web_deps, &bind).await {
+                error!(error = %e, "web dashboard exited");
+            }
+        });
+    }
+
+    // --- TUI dashboard or plain idle -------------------------------------
+    let enable_tui = env_bool("ENABLE_TUI", false);
     let dash_fut = async {
         if enable_tui {
             let deps = DashboardDeps {

@@ -61,6 +61,11 @@ alloy-primitives = { version = "0.7", features = ["serde"] }
 ratatui  = { version = "0.26", features = ["crossterm"] }
 crossterm = "0.27"
 
+# --- Web dashboard -----------------------------------------------------------
+axum        = "0.7"
+tower       = "0.4"
+tower-http  = { version = "0.5", features = ["cors"] }
+
 # --- OS / low-level ----------------------------------------------------------
 core_affinity = "0.8"
 libc          = "0.2"
