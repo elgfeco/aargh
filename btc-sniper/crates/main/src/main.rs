@@ -9,16 +9,19 @@
 //! * listens for `SIGTERM` / `SIGINT` for graceful shutdown and `SIGUSR1`
 //!   for a latency percentile dump
 
+use std::collections::HashSet;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Context, Result};
-use serde::Deserialize;
+use parking_lot::RwLock;
+
+use anyhow::{anyhow, Result};
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::watch;
+use tokio::task::JoinHandle;
 use tokio::time::{interval, sleep};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 use sniper_dashboard::{run_dashboard, DashboardDeps, LogRing};
@@ -26,7 +29,8 @@ use sniper_executor::{
     ClobClient, LatencyStage, LatencyStats, OrderManager, OrderManagerConfig, OrderTemplate,
 };
 use sniper_feed::{
-    parse_hex32, AssetId, BinanceFeed, MarketState, PolymarketFeed, Side as FeedSide,
+    discover_btc_markets, AssetId, BinanceFeed,
+    MarketState, PolymarketFeed, Side as FeedSide,
 };
 use sniper_risk::{AssetIndex, RiskEngine, RiskLimits, RiskVerdict};
 use sniper_signal::{EdgeEngine, EdgeParams, PositionSizer};
@@ -49,58 +53,12 @@ fn env_bool(key: &str, default: bool) -> bool {
         .unwrap_or(default)
 }
 
-// ---------- markets.toml ------------------------------------------------------
-
-#[derive(Debug, Deserialize)]
-struct MarketsConfig {
-    #[serde(default)]
-    market: Vec<MarketEntry>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    defaults: DefaultsConfig,
-}
-
-#[derive(Debug, Deserialize)]
-struct MarketEntry {
-    name: String,
-    #[serde(default)]
-    #[allow(dead_code)]
-    slug: String,
-    condition_id: String,
-    #[serde(default)]
-    #[allow(dead_code)]
-    target: u64,
-    #[serde(default)]
-    #[allow(dead_code)]
-    resolves_at: u64,
-    #[serde(default)]
-    #[allow(dead_code)]
-    min_edge_bps: Option<i32>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    max_position_usdc: Option<f64>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct DefaultsConfig {
-    #[serde(default)]
-    #[allow(dead_code)]
-    book_resync_ms: u64,
-    #[serde(default)]
-    #[allow(dead_code)]
-    ping_interval_ms: u64,
-    #[serde(default)]
-    #[allow(dead_code)]
-    vwap_window_secs: u64,
-}
-
-fn load_markets(path: &str) -> Result<MarketsConfig> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("reading markets config at {path}"))?;
-    toml::from_str(&text).context("parsing markets.toml")
-}
 
 // ---------- signal loop ------------------------------------------------------
+
+/// Shared list of assets the signal loop evaluates. Updated by the
+/// discovery loop, read every 5ms by the signal loop.
+type ActiveAssets = Arc<RwLock<Vec<AssetId>>>;
 
 async fn signal_loop(
     state: Arc<MarketState>,
@@ -108,10 +66,9 @@ async fn signal_loop(
     risk: Arc<RiskEngine>,
     engine: EdgeEngine,
     stats: Arc<LatencyStats>,
-    assets: Vec<AssetId>,
+    active_assets: ActiveAssets,
     shutdown: watch::Receiver<bool>,
 ) {
-    // Re-evaluate every 5ms — the book/tape mutate asynchronously.
     let mut tick = interval(Duration::from_millis(5));
     let mut shutdown = shutdown;
     let mut last_status = Instant::now();
@@ -126,7 +83,8 @@ async fn signal_loop(
         let tape = state.tape().snapshot();
         eval_count += 1;
 
-        // Log status every 10 seconds
+        let assets = active_assets.read().clone();
+
         if last_status.elapsed() > Duration::from_secs(10) {
             let msgs = state.messages_total();
             info!(
@@ -135,7 +93,7 @@ async fn signal_loop(
                 btc_trades = tape.trade_count,
                 btc_price = format_args!("{:.2}", tape.last_price),
                 momentum = format_args!("{:.4}", tape.momentum),
-                assets = assets.len(),
+                active_markets = assets.len(),
                 "signal loop status"
             );
             last_status = Instant::now();
@@ -176,6 +134,130 @@ async fn signal_loop(
     }
 }
 
+// ---------- market discovery loop --------------------------------------------
+
+async fn discovery_loop(
+    http: reqwest::Client,
+    gamma_base: String,
+    poly_ws_url: String,
+    state: Arc<MarketState>,
+    active_assets: ActiveAssets,
+    asset_index: Arc<AssetIndex>,
+    manager: Arc<OrderManager>,
+    owner: String,
+    shutdown: watch::Receiver<bool>,
+) {
+    let mut known: HashSet<AssetId> = HashSet::new();
+    let mut feed_handle: Option<JoinHandle<()>> = None;
+    let mut shutdown = shutdown;
+
+    loop {
+        // Check shutdown
+        if *shutdown.borrow() {
+            if let Some(h) = feed_handle.take() {
+                h.abort();
+            }
+            return;
+        }
+
+        let markets = discover_btc_markets(&http, &gamma_base).await;
+        let mut new_yes_tokens: Vec<AssetId> = Vec::new();
+        let mut changed = false;
+
+        for dm in &markets {
+            if !dm.accepting_orders {
+                continue;
+            }
+            let token = dm.yes_token;
+            new_yes_tokens.push(token);
+
+            if known.insert(token) {
+                changed = true;
+                info!(
+                    slug = %dm.slug,
+                    question = %dm.question,
+                    "new market discovered"
+                );
+
+                // Register in asset index + order templates
+                asset_index.insert(token, dm.condition_id, true);
+                asset_index.insert(dm.no_token, dm.condition_id, false);
+                for side in [sniper_feed::Side::Buy, sniper_feed::Side::Sell] {
+                    manager.register_template(OrderTemplate {
+                        asset: token,
+                        side,
+                        maker: owner.clone(),
+                        signer: owner.clone(),
+                        taker: "0x0000000000000000000000000000000000000000".into(),
+                        nonce: 1,
+                        expiration_secs: 0,
+                        fee_rate_bps: 0,
+                    });
+                }
+            }
+        }
+
+        // Prune tokens no longer in the active set
+        let active_set: HashSet<AssetId> = new_yes_tokens.iter().copied().collect();
+        let removed: Vec<AssetId> = known.difference(&active_set).copied().collect();
+        for r in &removed {
+            known.remove(r);
+            changed = true;
+            debug!("market expired, removing token");
+        }
+
+        if changed && !new_yes_tokens.is_empty() {
+            // Update the shared asset list for the signal loop
+            *active_assets.write() = new_yes_tokens.clone();
+
+            // Restart the Polymarket WS feed with the new asset set
+            if let Some(h) = feed_handle.take() {
+                h.abort();
+            }
+            match PolymarketFeed::new(&poly_ws_url, new_yes_tokens, state.clone()) {
+                Ok(feed) => {
+                    let feed = Arc::new(feed);
+                    feed_handle = Some(tokio::spawn({
+                        let f = feed.clone();
+                        async move {
+                            if let Err(e) = f.run_forever().await {
+                                error!(error = %e, "polymarket feed exited");
+                            }
+                        }
+                    }));
+                    info!(
+                        markets = active_assets.read().len(),
+                        "polymarket feed restarted with updated market set"
+                    );
+                }
+                Err(e) => {
+                    error!(error = %e, "failed to create polymarket feed");
+                }
+            }
+        } else if new_yes_tokens.is_empty() && feed_handle.is_some() {
+            // No active markets — drop the feed
+            if let Some(h) = feed_handle.take() {
+                h.abort();
+            }
+            *active_assets.write() = Vec::new();
+            info!("no active BTC markets — feed stopped");
+        }
+
+        // Poll every 30 seconds
+        tokio::select! {
+            _ = sleep(Duration::from_secs(30)) => {}
+            _ = shutdown.changed() => {
+                if *shutdown.borrow() {
+                    if let Some(h) = feed_handle.take() {
+                        h.abort();
+                    }
+                    return;
+                }
+            }
+        }
+    }
+}
+
 // ---------- main -------------------------------------------------------------
 
 #[tokio::main(flavor = "multi_thread")]
@@ -204,35 +286,9 @@ async fn main() -> Result<()> {
     }
     // Workers (set via TRADING_CORES) are pinned when spawned.
 
-    // --- config -----------------------------------------------------------
-    let markets_path = env_str("MARKETS_CONFIG", "config/markets.toml");
-    let cfg = load_markets(&markets_path)
-        .unwrap_or_else(|e| {
-            warn!(error = %e, "failed to load markets.toml — running with empty market list");
-            MarketsConfig {
-                market: Vec::new(),
-                defaults: DefaultsConfig::default(),
-            }
-        });
-
-    // For every market we watch both YES (asset 0) and NO (asset 1). The
-    // real bot resolves these via the Gamma API; the skeleton uses the raw
-    // condition id as a YES-only placeholder. In production replace this
-    // with a startup call to /markets?condition_id={c}.
-    let mut assets: Vec<AssetId> = Vec::new();
+    // --- shared active-market list (updated by discovery loop) -------------
+    let active_assets: ActiveAssets = Arc::new(RwLock::new(Vec::new()));
     let asset_index = Arc::new(AssetIndex::new());
-    for m in &cfg.market {
-        let Some(cid_bytes) = parse_hex32(&m.condition_id) else {
-            warn!(market = %m.name, "skipping market: invalid condition_id");
-            continue;
-        };
-        info!(market = %m.name, "watching market");
-        assets.push(cid_bytes);
-        asset_index.insert(cid_bytes, cid_bytes, true);
-    }
-    if assets.is_empty() {
-        warn!("no markets configured — idle run");
-    }
 
     // --- shared state -----------------------------------------------------
     let state = MarketState::new();
@@ -263,22 +319,7 @@ async fn main() -> Result<()> {
     };
     let manager = OrderManager::new(client.clone(), manager_cfg, stats.clone());
 
-    // Pre-register one template per (asset, side). At fire time we only
-    // swap price/size/salt.
-    for asset in &assets {
-        for side in [sniper_feed::Side::Buy, sniper_feed::Side::Sell] {
-            manager.register_template(OrderTemplate {
-                asset: *asset,
-                side,
-                maker: owner.clone(),
-                signer: owner.clone(),
-                taker: "0x0000000000000000000000000000000000000000".into(),
-                nonce: 1,
-                expiration_secs: 0,
-                fee_rate_bps: 0,
-            });
-        }
-    }
+    // Templates are registered dynamically by the discovery loop.
 
     // --- signal engine ----------------------------------------------------
     let sizer = PositionSizer::new(
@@ -306,24 +347,15 @@ async fn main() -> Result<()> {
         info!(count = addrs.count(), "resolved polymarket DNS at startup");
     }
 
-    // --- spawn feed tasks -------------------------------------------------
+    // --- spawn Binance feed (always on) ------------------------------------
     let poly_url = env_str(
         "POLYMARKET_WS",
         "wss://ws-subscriptions-clob.polymarket.com/ws/market",
     );
     let binance_url = env_str("BINANCE_WS", "wss://stream.binance.com:9443/ws/btcusdt@trade");
+    let gamma_base = env_str("GAMMA_API", "https://gamma-api.polymarket.com");
 
-    let poly = Arc::new(PolymarketFeed::new(&poly_url, assets.clone(), state.clone())?);
     let binance = Arc::new(BinanceFeed::new(&binance_url, state.clone())?);
-
-    tokio::spawn({
-        let p = poly.clone();
-        async move {
-            if let Err(e) = p.run_forever().await {
-                error!(error = %e, "polymarket feed exited");
-            }
-        }
-    });
     tokio::spawn({
         let b = binance.clone();
         async move {
@@ -333,6 +365,22 @@ async fn main() -> Result<()> {
         }
     });
 
+    // --- market discovery loop (manages Polymarket WS lifecycle) ----------
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()?;
+    tokio::spawn(discovery_loop(
+        http,
+        gamma_base,
+        poly_url,
+        state.clone(),
+        active_assets.clone(),
+        asset_index.clone(),
+        manager.clone(),
+        owner.clone(),
+        shutdown_rx.clone(),
+    ));
+
     // --- signal loop ------------------------------------------------------
     let sig_handle = tokio::spawn(signal_loop(
         state.clone(),
@@ -340,7 +388,7 @@ async fn main() -> Result<()> {
         risk.clone(),
         edge.clone(),
         stats.clone(),
-        assets.clone(),
+        active_assets.clone(),
         shutdown_rx.clone(),
     ));
 

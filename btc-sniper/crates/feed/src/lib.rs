@@ -19,6 +19,7 @@
 pub mod binance;
 pub mod book;
 pub mod btc;
+pub mod discovery;
 pub mod polymarket;
 pub mod state;
 pub mod types;
@@ -26,6 +27,7 @@ pub mod types;
 pub use binance::BinanceFeed;
 pub use book::{BookSnapshot, OrderBook, PriceLevel};
 pub use btc::{BtcTape, BtcTick, Source, TapeSnapshot};
+pub use discovery::{decimal_to_bytes32, discover_btc_markets, DiscoveredMarket};
 pub use polymarket::{parse_message, PolymarketFeed, PolymarketMessage};
 pub use state::MarketState;
 pub use types::{parse_hex32, AssetId, MarketId, Price, Side, Size};

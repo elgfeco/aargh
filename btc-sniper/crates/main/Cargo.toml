@@ -31,6 +31,8 @@ hdrhistogram       = { workspace = true }
 core_affinity = { workspace = true }
 nix           = { workspace = true }
 libc          = { workspace = true }
+parking_lot   = { workspace = true }
+reqwest       = { workspace = true }
 
 anyhow    = { workspace = true }
 thiserror = { workspace = true }
