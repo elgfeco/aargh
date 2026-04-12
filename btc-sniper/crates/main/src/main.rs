@@ -33,7 +33,7 @@ use sniper_feed::{
     MarketState, PolymarketFeed, Side as FeedSide,
 };
 use sniper_risk::{AssetIndex, RiskEngine, RiskLimits, RiskVerdict};
-use sniper_signal::{EdgeEngine, EdgeParams, PositionSizer};
+use sniper_signal::{EdgeEngine, EdgeParams, MarketMaker, MakerParams, PositionSizer, QuoteAction};
 
 // ---------- env helpers ------------------------------------------------------
 
@@ -128,6 +128,123 @@ async fn signal_loop(
                     RiskVerdict::Deny(reason) => {
                         warn!(?reason, ?decision, "risk denied fire");
                     }
+                }
+            }
+        }
+    }
+}
+
+// ---------- maker loop -------------------------------------------------------
+
+/// Per-asset state tracked by the maker loop.
+struct AssetQuoteState {
+    fair_price: Option<sniper_feed::Price>,
+    inventory_net_atoms: i64,
+}
+
+/// Market-making loop: continuously quotes both sides of each active market.
+/// Replaces the sniper signal_loop when MAKER_MODE=true.
+async fn maker_loop(
+    state: Arc<MarketState>,
+    manager: Arc<OrderManager>,
+    mm: MarketMaker,
+    stats: Arc<LatencyStats>,
+    active_assets: ActiveAssets,
+    mut shutdown: watch::Receiver<bool>,
+) {
+    use std::collections::HashMap;
+
+    let mut tick = interval(Duration::from_millis(50)); // 50ms quote refresh
+    let mut asset_states: HashMap<AssetId, AssetQuoteState> = HashMap::new();
+    let mut last_status = Instant::now();
+    let mut eval_count: u64 = 0;
+    let mut requote_count: u64 = 0;
+
+    loop {
+        tokio::select! {
+            _ = tick.tick() => {}
+            _ = shutdown.changed() => {
+                if *shutdown.borrow() { return; }
+            }
+        }
+
+        let tape = state.tape().snapshot();
+        let assets = active_assets.read().clone();
+        eval_count += 1;
+
+        if last_status.elapsed() > Duration::from_secs(10) {
+            info!(
+                evals = eval_count,
+                requotes = requote_count,
+                btc_price = format_args!("{:.2}", tape.last_price),
+                momentum = format_args!("{:.4}", tape.momentum),
+                active_markets = assets.len(),
+                open_orders = manager.open_count(),
+                "maker loop status"
+            );
+            last_status = Instant::now();
+        }
+
+        for asset in &assets {
+            let book = state.book(*asset);
+            let book_snap = book.snapshot();
+
+            let astate = asset_states.entry(*asset).or_insert(AssetQuoteState {
+                fair_price: None,
+                inventory_net_atoms: 0,
+            });
+
+            let t0 = Instant::now();
+            let action = mm.evaluate(
+                &book_snap,
+                &tape,
+                astate.inventory_net_atoms,
+                astate.fair_price,
+            );
+            stats.record(LatencyStage::SignalEval, t0.elapsed().as_nanos() as u64);
+
+            match action {
+                QuoteAction::Hold => {}
+                QuoteAction::CancelAll => {
+                    let m = manager.clone();
+                    let a = *asset;
+                    tokio::spawn(async move { m.cancel_for_asset(a).await; });
+                    astate.fair_price = None;
+                }
+                QuoteAction::Requote(quote) => {
+                    requote_count += 1;
+                    astate.fair_price = Some(quote.fair_price);
+
+                    let m = manager.clone();
+                    let a = *asset;
+                    tokio::spawn(async move {
+                        // Cancel existing quotes for this asset
+                        m.cancel_for_asset(a).await;
+
+                        // Post new bid
+                        if let Some(leg) = quote.bid {
+                            if let Err(e) = m.submit_limit(
+                                a,
+                                sniper_feed::Side::Buy,
+                                leg.price,
+                                leg.size,
+                            ).await {
+                                warn!(error = %e, "maker bid failed");
+                            }
+                        }
+
+                        // Post new ask
+                        if let Some(leg) = quote.ask {
+                            if let Err(e) = m.submit_limit(
+                                a,
+                                sniper_feed::Side::Sell,
+                                leg.price,
+                                leg.size,
+                            ).await {
+                                warn!(error = %e, "maker ask failed");
+                            }
+                        }
+                    });
                 }
             }
         }
@@ -394,16 +511,46 @@ async fn main() -> Result<()> {
         shutdown_rx.clone(),
     ));
 
-    // --- signal loop ------------------------------------------------------
-    let sig_handle = tokio::spawn(signal_loop(
-        state.clone(),
-        manager.clone(),
-        risk.clone(),
-        edge.clone(),
-        stats.clone(),
-        active_assets.clone(),
-        shutdown_rx.clone(),
-    ));
+    // --- maker or taker mode ------------------------------------------------
+    let maker_mode = env_bool("MAKER_MODE", false);
+
+    let sig_handle = if maker_mode {
+        let mm = MarketMaker::new(MakerParams {
+            half_spread_bps: env_parse("HALF_SPREAD_BPS", 150i32),
+            quote_size_atoms: (env_parse::<f64>("QUOTE_SIZE_USDC", 100.0) * 1_000_000.0) as u64,
+            requote_threshold_bps: env_parse("REQUOTE_THRESHOLD_BPS", 50i32),
+            max_inventory_atoms: (env_parse::<f64>("MAX_INVENTORY_USDC", 500.0) * 1_000_000.0)
+                as u64,
+            inventory_skew_bps_per_100usdc: env_parse("INVENTORY_SKEW_BPS", 30i32),
+            max_conviction_bps: env_parse("MAX_CONVICTION_BPS", 1000i32),
+        });
+        info!(
+            half_spread_bps = mm.params().half_spread_bps,
+            quote_size = mm.params().quote_size_atoms,
+            requote_threshold = mm.params().requote_threshold_bps,
+            max_inventory = mm.params().max_inventory_atoms,
+            "MAKER MODE enabled"
+        );
+        tokio::spawn(maker_loop(
+            state.clone(),
+            manager.clone(),
+            mm,
+            stats.clone(),
+            active_assets.clone(),
+            shutdown_rx.clone(),
+        ))
+    } else {
+        info!("TAKER (sniper) mode enabled");
+        tokio::spawn(signal_loop(
+            state.clone(),
+            manager.clone(),
+            risk.clone(),
+            edge.clone(),
+            stats.clone(),
+            active_assets.clone(),
+            shutdown_rx.clone(),
+        ))
+    };
 
     // --- stale order sweeper ---------------------------------------------
     tokio::spawn({

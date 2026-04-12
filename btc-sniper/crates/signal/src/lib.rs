@@ -17,8 +17,10 @@
 
 pub mod edge;
 pub mod kelly;
+pub mod maker;
 pub mod sizing;
 
 pub use edge::{Decision, EdgeEngine, EdgeParams, Intent};
 pub use kelly::KellyTable;
+pub use maker::{MarketMaker, MakerParams, Quote, QuoteAction, QuoteLeg};
 pub use sizing::PositionSizer;

@@ -230,6 +230,80 @@ impl OrderManager {
         }
     }
 
+    /// Cancel all live orders for a specific asset. Used by the maker loop
+    /// to yank quotes before re-posting at new prices.
+    pub async fn cancel_for_asset(self: &Arc<Self>, asset: AssetId) -> usize {
+        let ids: Vec<(OrderId, String)> = self
+            .orders
+            .iter()
+            .filter_map(|e| {
+                let o = e.value();
+                if o.asset == asset && !o.is_terminal() {
+                    o.clob_id.clone().map(|c| (o.id, c))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let count = ids.len();
+        for (oid, clob_id) in ids {
+            match self.client.cancel_order(&clob_id).await {
+                Ok(()) => {
+                    if let Some(mut e) = self.orders.get_mut(&oid) {
+                        e.state = OrderState::Cancelled;
+                    }
+                }
+                Err(e) => warn!(error = %e, id = oid.0, "cancel_for_asset failed"),
+            }
+        }
+        count
+    }
+
+    /// Submit a limit order directly (for the maker strategy).
+    /// Unlike `submit()`, this takes raw price/size/side instead of an Intent.
+    pub async fn submit_limit(
+        self: &Arc<Self>,
+        asset: AssetId,
+        side: Side,
+        price: Price,
+        size: Size,
+    ) -> Result<Option<OrderId>> {
+        if self.is_paused() {
+            return Ok(None);
+        }
+        if size == Size::ZERO {
+            return Ok(None);
+        }
+
+        let tpl = match self.templates.get(&(asset, side)) {
+            Some(t) => t.clone(),
+            None => return Ok(None),
+        };
+
+        let salt: u64 = rand::thread_rng().gen();
+        let signed = tpl.sign(price, size, salt);
+
+        let mut order = Order::new(asset, side, price, size);
+        self.orders.insert(order.id, order.clone());
+
+        match self.client.post_order(&signed).await {
+            Ok(clob_id) => {
+                order.clob_id = Some(clob_id.clone());
+                order.state = OrderState::Acked;
+                self.orders.insert(order.id, order.clone());
+                debug!(id = order.id.0, side = side.as_str(),
+                       price = %price, size = %size, "maker order posted");
+                Ok(Some(order.id))
+            }
+            Err(e) => {
+                order.state = OrderState::Rejected;
+                self.orders.insert(order.id, order);
+                warn!(error = %e, "maker order rejected");
+                Err(e)
+            }
+        }
+    }
+
     /// Record a fill arriving from the user WS channel. `filled_delta` adds
     /// to the existing `filled` count; when `filled >= size` we mark the
     /// order `Filled`.
