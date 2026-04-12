@@ -191,7 +191,7 @@ async fn discovery_loop(
                         taker: "0x0000000000000000000000000000000000000000".into(),
                         nonce: 1,
                         expiration_secs: 0,
-                        fee_rate_bps: 0,
+                        fee_rate_bps: 1000, // Crypto category per CLOB API
                     });
                 }
             }
@@ -329,8 +329,8 @@ async fn main() -> Result<()> {
     );
     let edge = EdgeEngine::new(
         EdgeParams {
-            min_edge_bps: env_parse("MIN_EDGE_BPS", 250i32),
-            tx_cost_bps: env_parse("TX_COST_BPS", 0i32),
+            min_edge_bps: env_parse("MIN_EDGE_BPS", 500i32),
+            tx_cost_bps: env_parse("TX_COST_BPS", 360i32),
             max_conviction_bps: 1000,
         },
         sizer,
