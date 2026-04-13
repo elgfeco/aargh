@@ -22,6 +22,7 @@ pub mod manager;
 pub mod order;
 
 pub use client::{ClobClient, L2Auth};
+pub use k256::ecdsa::SigningKey;
 pub use latency::{LatencyStage, LatencyStats};
 pub use manager::{OrderManager, OrderManagerConfig};
 pub use order::{Order, OrderId, OrderState, OrderTemplate};

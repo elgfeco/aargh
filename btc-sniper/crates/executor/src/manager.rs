@@ -24,6 +24,8 @@ use sniper_signal::Intent;
 use tokio::time::interval;
 use tracing::{debug, info, warn};
 
+use k256::ecdsa::SigningKey;
+
 use crate::client::ClobClient;
 use crate::latency::{LatencyStage, LatencyStats};
 use crate::order::{Order, OrderId, OrderState, OrderTemplate};
@@ -56,6 +58,7 @@ pub struct OrderManager {
     orders: DashMap<OrderId, Order>,
     templates: DashMap<(AssetId, Side), OrderTemplate>,
     stats: Arc<LatencyStats>,
+    signing_key: Option<Arc<SigningKey>>,
     paused: AtomicBool,
     fills_total: AtomicU64,
 }
@@ -65,6 +68,7 @@ impl OrderManager {
         client: Arc<ClobClient>,
         config: OrderManagerConfig,
         stats: Arc<LatencyStats>,
+        signing_key: Option<Arc<SigningKey>>,
     ) -> Arc<Self> {
         Arc::new(Self {
             client,
@@ -72,6 +76,7 @@ impl OrderManager {
             orders: DashMap::new(),
             templates: DashMap::new(),
             stats,
+            signing_key,
             paused: AtomicBool::new(false),
             fills_total: AtomicU64::new(0),
         })
@@ -143,7 +148,7 @@ impl OrderManager {
         };
 
         let salt: u64 = rand::thread_rng().gen();
-        let signed = tpl.sign(price, size, salt);
+        let signed = tpl.sign(price, size, salt, self.signing_key.as_deref())?;
         self.stats.record(
             LatencyStage::SignalEval,
             t_eval.elapsed().as_nanos() as u64,
@@ -281,7 +286,7 @@ impl OrderManager {
         };
 
         let salt: u64 = rand::thread_rng().gen();
-        let signed = tpl.sign(price, size, salt);
+        let signed = tpl.sign(price, size, salt, self.signing_key.as_deref())?;
 
         let mut order = Order::new(asset, side, price, size);
         self.orders.insert(order.id, order.clone());
@@ -346,6 +351,7 @@ mod tests {
             "0xdead".into(),
             None,
             true, // dry run
+            None, // proxy_url
         )
         .unwrap();
         OrderManager::new(
@@ -356,6 +362,7 @@ mod tests {
                 owner: "0xdead".into(),
             },
             Arc::new(LatencyStats::new()),
+            None, // signing_key
         )
     }
 
@@ -395,6 +402,7 @@ mod tests {
             nonce: 1,
             expiration_secs: 0,
             fee_rate_bps: 0,
+            neg_risk: false,
         });
         let r = m
             .submit(

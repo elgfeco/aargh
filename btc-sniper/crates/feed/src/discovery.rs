@@ -25,6 +25,8 @@ pub struct DiscoveredMarket {
     pub question: String,
     /// Whether the market is actively accepting orders.
     pub accepting_orders: bool,
+    /// Whether this is a neg-risk market (uses different exchange contract).
+    pub neg_risk: bool,
 }
 
 /// Gamma API market response (only deserialize fields we need).
@@ -44,6 +46,8 @@ struct GammaMarket {
     closed: Option<bool>,
     #[serde(rename = "acceptingOrders", default)]
     accepting_orders: Option<bool>,
+    #[serde(rename = "negRisk", default)]
+    neg_risk: Option<bool>,
 }
 
 /// Convert a decimal string (like the CLOB token ID) into a big-endian
@@ -171,6 +175,7 @@ pub async fn discover_btc_markets(
             slug,
             question: m.question.unwrap_or_default(),
             accepting_orders: m.accepting_orders.unwrap_or(false),
+            neg_risk: m.neg_risk.unwrap_or(false),
         });
     }
 

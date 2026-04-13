@@ -33,6 +33,7 @@ pub struct L2Auth {
 }
 
 #[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct PostOrderBody<'a> {
     order: &'a SignedOrder,
     owner: &'a str,
@@ -164,7 +165,7 @@ impl ClobClient {
             return Ok(format!("dryrun-{}", order.salt));
         }
 
-        let path = "/order";
+        let path = if order.neg_risk { "/neg-risk/order" } else { "/order" };
         let url = format!("{}{}", self.base_url, path);
         let body = PostOrderBody {
             order,

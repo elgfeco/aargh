@@ -87,6 +87,7 @@ hex      = "0.4"
 sha2     = "0.10"
 hmac     = "0.12"
 base64   = "0.22"
+k256     = { version = "0.13", features = ["ecdsa"] }
 
 # --- internal crates ---------------------------------------------------------
 sniper-feed      = { path = "crates/feed" }

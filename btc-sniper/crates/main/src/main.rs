@@ -335,9 +335,10 @@ async fn discovery_loop(
                         maker: owner.clone(),
                         signer: owner.clone(),
                         taker: "0x0000000000000000000000000000000000000000".into(),
-                        nonce: 1,
+                        nonce: 0,
                         expiration_secs: 0,
-                        fee_rate_bps: 1000, // Crypto category per CLOB API
+                        fee_rate_bps: 0, // Maker orders: 0% fee
+                        neg_risk: dm.neg_risk,
                     });
                 }
             }
@@ -484,7 +485,30 @@ async fn main() -> Result<()> {
         max_open_orders: env_parse("MAX_OPEN_POSITIONS", 8usize),
         owner: owner.clone(),
     };
-    let manager = OrderManager::new(client.clone(), manager_cfg, stats.clone());
+    // --- EIP-712 signing key (for real order signatures) --------------------
+    let signing_key = {
+        let key_hex = std::env::var("POLYMARKET_PRIVATE_KEY").ok();
+        match key_hex {
+            Some(h)
+                if !h.is_empty()
+                    && h != "0x0000000000000000000000000000000000000000000000000000000000000000" =>
+            {
+                let h = h.strip_prefix("0x").unwrap_or(&h);
+                let key_bytes =
+                    hex::decode(h).map_err(|e| anyhow!("decode private key hex: {}", e))?;
+                let sk = sniper_executor::SigningKey::from_slice(&key_bytes)
+                    .map_err(|e| anyhow!("invalid signing key: {}", e))?;
+                info!("EIP-712 signing key loaded");
+                Some(Arc::new(sk))
+            }
+            _ => {
+                warn!("POLYMARKET_PRIVATE_KEY not set — orders will use stub signatures");
+                None
+            }
+        }
+    };
+
+    let manager = OrderManager::new(client.clone(), manager_cfg, stats.clone(), signing_key);
 
     // Templates are registered dynamically by the discovery loop.
 

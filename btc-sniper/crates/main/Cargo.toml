@@ -37,5 +37,6 @@ reqwest       = { workspace = true }
 anyhow    = { workspace = true }
 thiserror = { workspace = true }
 dotenvy   = { workspace = true }
+hex       = { workspace = true }
 
 rust_decimal = { workspace = true }
