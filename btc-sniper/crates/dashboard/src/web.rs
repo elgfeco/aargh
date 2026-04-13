@@ -332,46 +332,47 @@ async fn api_wallet(State(deps): State<AppState>) -> Json<WalletResponse> {
         }, "latest"]
     });
 
-    let rpc_url = "https://polygon-rpc.com";
-    match deps.http.post(rpc_url).json(&rpc_body).send().await {
-        Ok(resp) => {
-            if let Ok(text) = resp.text().await {
-                #[derive(serde::Deserialize)]
-                struct RpcResp {
-                    result: Option<String>,
+    let rpc_urls = [
+        "https://polygon-bor-rpc.publicnode.com",
+        "https://rpc.ankr.com/polygon",
+        "https://polygon-rpc.com",
+    ];
+
+    for rpc_url in rpc_urls {
+        let resp = match deps.http.post(rpc_url).json(&rpc_body).send().await {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        if !resp.status().is_success() {
+            continue;
+        }
+        let text = match resp.text().await {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        #[derive(serde::Deserialize)]
+        struct RpcResp {
+            result: Option<String>,
+        }
+        if let Ok(parsed) = serde_json::from_str::<RpcResp>(&text) {
+            if let Some(hex) = parsed.result {
+                let hex = hex.trim_start_matches("0x");
+                if let Ok(atoms) = u128::from_str_radix(hex, 16) {
+                    return Json(WalletResponse {
+                        address: deps.wallet_address.clone(),
+                        usdc_balance: Some(atoms as f64 / 1_000_000.0),
+                        error: None,
+                    });
                 }
-                if let Ok(parsed) = serde_json::from_str::<RpcResp>(&text) {
-                    if let Some(hex) = parsed.result {
-                        let hex = hex.trim_start_matches("0x");
-                        if let Ok(atoms) = u128::from_str_radix(hex, 16) {
-                            // USDC has 6 decimals on Polygon
-                            return Json(WalletResponse {
-                                address: deps.wallet_address.clone(),
-                                usdc_balance: Some(atoms as f64 / 1_000_000.0),
-                                error: None,
-                            });
-                        }
-                    }
-                }
-                Json(WalletResponse {
-                    address: deps.wallet_address.clone(),
-                    usdc_balance: None,
-                    error: Some("failed to parse RPC response".into()),
-                })
-            } else {
-                Json(WalletResponse {
-                    address: deps.wallet_address.clone(),
-                    usdc_balance: None,
-                    error: Some("failed to read response".into()),
-                })
             }
         }
-        Err(e) => Json(WalletResponse {
-            address: deps.wallet_address.clone(),
-            usdc_balance: None,
-            error: Some(format!("RPC request failed: {e}")),
-        }),
     }
+
+    Json(WalletResponse {
+        address: deps.wallet_address.clone(),
+        usdc_balance: None,
+        error: Some("all Polygon RPCs failed".into()),
+    })
 }
 
 // ── Router ──────────────────────────────────────────────────────────────────
