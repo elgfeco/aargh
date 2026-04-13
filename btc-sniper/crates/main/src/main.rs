@@ -194,6 +194,12 @@ async fn maker_loop(
                 inventory_net_atoms: 0,
             });
 
+            // If we have no open orders, force a fresh quote by clearing
+            // the cached fair price so the maker engine won't return Hold.
+            if manager.open_count() == 0 {
+                astate.fair_price = None;
+            }
+
             let t0 = Instant::now();
             let action = mm.evaluate(
                 &book_snap,
@@ -217,31 +223,54 @@ async fn maker_loop(
 
                     let m = manager.clone();
                     let a = *asset;
+                    let stats2 = stats.clone();
                     tokio::spawn(async move {
                         // Cancel existing quotes for this asset
                         m.cancel_for_asset(a).await;
 
                         // Post new bid
                         if let Some(leg) = quote.bid {
-                            if let Err(e) = m.submit_limit(
+                            let t0 = Instant::now();
+                            match m.submit_limit(
                                 a,
                                 sniper_feed::Side::Buy,
                                 leg.price,
                                 leg.size,
                             ).await {
-                                warn!(error = %e, "maker bid failed");
+                                Ok(_) => {
+                                    stats2.record(LatencyStage::OrderFired, t0.elapsed().as_nanos() as u64);
+                                    info!(
+                                        side = "BUY",
+                                        price = leg.price.as_prob(),
+                                        size_usdc = leg.size.as_usdc(),
+                                        fair = quote.fair_price.as_prob(),
+                                        "maker order posted"
+                                    );
+                                }
+                                Err(e) => warn!(error = %e, "maker bid failed"),
                             }
                         }
 
                         // Post new ask
                         if let Some(leg) = quote.ask {
-                            if let Err(e) = m.submit_limit(
+                            let t0 = Instant::now();
+                            match m.submit_limit(
                                 a,
                                 sniper_feed::Side::Sell,
                                 leg.price,
                                 leg.size,
                             ).await {
-                                warn!(error = %e, "maker ask failed");
+                                Ok(_) => {
+                                    stats2.record(LatencyStage::OrderFired, t0.elapsed().as_nanos() as u64);
+                                    info!(
+                                        side = "SELL",
+                                        price = leg.price.as_prob(),
+                                        size_usdc = leg.size.as_usdc(),
+                                        fair = quote.fair_price.as_prob(),
+                                        "maker order posted"
+                                    );
+                                }
+                                Err(e) => warn!(error = %e, "maker ask failed"),
                             }
                         }
                     });
