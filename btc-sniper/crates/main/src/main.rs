@@ -452,11 +452,13 @@ async fn main() -> Result<()> {
     // --- executor / order manager ----------------------------------------
     let dry_run = env_bool("DRY_RUN", true);
     let owner = env_str("POLYMARKET_OWNER", "0x0000000000000000000000000000000000000000");
+    let proxy_url = std::env::var("CLOB_PROXY").ok();
     let client = ClobClient::new(
         env_str("POLYMARKET_HOST", "https://clob.polymarket.com"),
         owner.clone(),
         None, // L2 auth wired later
         dry_run,
+        proxy_url.as_deref(),
     )?;
     let manager_cfg = OrderManagerConfig {
         stale_ttl_ms: env_parse("STALE_ORDER_TTL_MS", 500u64),

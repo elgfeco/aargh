@@ -45,28 +45,43 @@ pub struct ClobClient {
 impl ClobClient {
     /// Build a new client. `base_url` is the CLOB host (e.g.
     /// `https://clob.polymarket.com`).
-    pub fn new(base_url: String, owner: String, _auth: Option<L2Auth>, dry_run: bool) -> Result<Arc<Self>> {
+    pub fn new(
+        base_url: String,
+        owner: String,
+        _auth: Option<L2Auth>,
+        dry_run: bool,
+        proxy_url: Option<&str>,
+    ) -> Result<Arc<Self>> {
         let mut headers = HeaderMap::new();
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         // L2 auth headers would be added per-request since they include an
         // HMAC over the request body + timestamp. See `sign_request`.
 
-        let inner = Client::builder()
-            .http2_prior_knowledge()
-            .http2_keep_alive_interval(Duration::from_secs(5))
-            .http2_keep_alive_timeout(Duration::from_secs(20))
-            .http2_keep_alive_while_idle(true)
+        let mut builder = Client::builder()
             .pool_idle_timeout(Duration::from_secs(90))
             .pool_max_idle_per_host(8)
             .tcp_keepalive(Duration::from_secs(10))
             .tcp_nodelay(true)
-            .connect_timeout(Duration::from_millis(500))
-            .timeout(Duration::from_secs(3))
+            .connect_timeout(Duration::from_millis(2000))
+            .timeout(Duration::from_secs(5))
             .default_headers(headers)
-            .user_agent("btc-sniper/0.1")
-            .build()
-            .context("reqwest client build")?;
+            .user_agent("btc-sniper/0.1");
+
+        if let Some(proxy) = proxy_url {
+            info!(proxy, "CLOB client using proxy");
+            let p = reqwest::Proxy::all(proxy).context("invalid proxy URL")?;
+            builder = builder.proxy(p);
+            // HTTP/2 prior knowledge doesn't work through SOCKS proxies
+        } else {
+            builder = builder
+                .http2_prior_knowledge()
+                .http2_keep_alive_interval(Duration::from_secs(5))
+                .http2_keep_alive_timeout(Duration::from_secs(20))
+                .http2_keep_alive_while_idle(true);
+        }
+
+        let inner = builder.build().context("reqwest client build")?;
 
         info!(base_url, dry_run, "CLOB client ready");
 
