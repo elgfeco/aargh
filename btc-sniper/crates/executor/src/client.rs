@@ -167,9 +167,12 @@ impl ClobClient {
 
         let path = if order.neg_risk { "/neg-risk/order" } else { "/order" };
         let url = format!("{}{}", self.base_url, path);
+        let api_key_owner = self.auth.as_ref()
+            .map(|a| a.api_key.as_str())
+            .unwrap_or(&self.owner); // fallback to address for dry-run
         let body = PostOrderBody {
             order,
-            owner: &self.owner,
+            owner: api_key_owner,
             order_type: "GTC",
         };
         let body_json = serde_json::to_string(&body).context("serialize order body")?;
