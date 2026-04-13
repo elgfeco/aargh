@@ -38,5 +38,7 @@ anyhow    = { workspace = true }
 thiserror = { workspace = true }
 dotenvy   = { workspace = true }
 hex       = { workspace = true }
+k256      = { workspace = true }
+ethers    = { workspace = true }
 
 rust_decimal = { workspace = true }

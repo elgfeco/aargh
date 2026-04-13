@@ -173,6 +173,7 @@ impl ClobClient {
             order_type: "GTC",
         };
         let body_json = serde_json::to_string(&body).context("serialize order body")?;
+        debug!(body = %body_json, path, "posting order to CLOB");
 
         let headers = self.l2_headers("POST", path, Some(&body_json));
 

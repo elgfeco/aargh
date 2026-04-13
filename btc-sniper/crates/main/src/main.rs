@@ -508,6 +508,19 @@ async fn main() -> Result<()> {
         }
     };
 
+    // Verify signing key matches POLYMARKET_OWNER
+    if let Some(ref sk) = signing_key {
+        use k256::ecdsa::VerifyingKey;
+        let vk = VerifyingKey::from(sk.as_ref());
+        let pk = vk.to_encoded_point(false);
+        let hash = ethers::utils::keccak256(&pk.as_bytes()[1..]);
+        let derived = format!("0x{}", hex::encode(&hash[12..]));
+        info!(derived_address = %derived, configured_owner = %owner, "wallet address check");
+        if derived.to_lowercase() != owner.to_lowercase() {
+            warn!("POLYMARKET_OWNER does not match signing key! Orders will be rejected.");
+        }
+    }
+
     let manager = OrderManager::new(client.clone(), manager_cfg, stats.clone(), signing_key);
 
     // Templates are registered dynamically by the discovery loop.

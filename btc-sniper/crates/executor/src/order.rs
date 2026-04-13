@@ -203,7 +203,7 @@ pub struct OrderTemplate {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SignedOrder {
-    pub salt: String,
+    pub salt: u64,
     pub maker: String,
     pub signer: String,
     pub taker: String,
@@ -303,7 +303,7 @@ impl OrderTemplate {
         };
 
         Ok(SignedOrder {
-            salt: salt.to_string(),
+            salt,
             maker: self.maker.clone(),
             signer: self.signer.clone(),
             taker: self.taker.clone(),
@@ -376,7 +376,7 @@ mod tests {
         // taker_amount (shares) = 100 USDC = 100_000_000 atoms
         assert_eq!(so.taker_amount, "100000000");
         assert_eq!(so.side, "BUY");
-        assert_eq!(so.salt, "123");
+        assert_eq!(so.salt, 123);
     }
 
     #[test]
