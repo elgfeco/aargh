@@ -30,6 +30,8 @@ rust_decimal = { workspace = true }
 
 hex   = { workspace = true }
 sha2  = { workspace = true }
+hmac  = { workspace = true }
+base64 = { workspace = true }
 rand  = { workspace = true }
 
 tracing      = { workspace = true }

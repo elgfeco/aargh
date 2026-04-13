@@ -453,10 +453,29 @@ async fn main() -> Result<()> {
     let dry_run = env_bool("DRY_RUN", true);
     let owner = env_str("POLYMARKET_OWNER", "0x0000000000000000000000000000000000000000");
     let proxy_url = std::env::var("CLOB_PROXY").ok();
+    let l2_auth = {
+        let key = std::env::var("CLOB_API_KEY").ok();
+        let secret = std::env::var("CLOB_SECRET").ok();
+        let pass = std::env::var("CLOB_PASSPHRASE").ok();
+        match (key, secret, pass) {
+            (Some(k), Some(s), Some(p)) if !k.is_empty() => {
+                info!("L2 auth configured (API key present)");
+                Some(sniper_executor::L2Auth {
+                    api_key: k,
+                    api_secret: s,
+                    api_passphrase: p,
+                })
+            }
+            _ => {
+                warn!("L2 auth NOT configured — orders will be rejected by CLOB");
+                None
+            }
+        }
+    };
     let client = ClobClient::new(
         env_str("POLYMARKET_HOST", "https://clob.polymarket.com"),
         owner.clone(),
-        None, // L2 auth wired later
+        l2_auth,
         dry_run,
         proxy_url.as_deref(),
     )?;

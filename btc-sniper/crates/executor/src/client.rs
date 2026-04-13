@@ -3,23 +3,28 @@
 //! We maintain a long-lived `reqwest::Client` with HTTP/2 multiplexing and
 //! aggressive keep-alive so every `POST /order` reuses the same TCP
 //! connection. Authentication headers (L2 API key / secret / passphrase)
-//! are pre-formatted once at startup and cached.
+//! are computed per-request via HMAC-SHA256.
 //!
 //! The client is `Arc<...>`-wrapped and cheap to clone.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
+use base64::engine::general_purpose::URL_SAFE;
+use base64::Engine;
+use hmac::{Hmac, Mac};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE};
 use reqwest::Client;
 use serde::Serialize;
+use sha2::Sha256;
 use tracing::{debug, error, info, warn};
 
 use crate::order::SignedOrder;
 
-/// Cached L2 auth headers. Built once at startup and held for the lifetime
-/// of the process. In production, rotate before the API key expires.
+type HmacSha256 = Hmac<Sha256>;
+
+/// L2 auth credentials. Built once at startup.
 #[derive(Clone, Debug)]
 pub struct L2Auth {
     pub api_key: String,
@@ -39,6 +44,7 @@ pub struct ClobClient {
     inner: Client,
     base_url: String,
     owner: String,
+    auth: Option<L2Auth>,
     dry_run: bool,
 }
 
@@ -48,15 +54,13 @@ impl ClobClient {
     pub fn new(
         base_url: String,
         owner: String,
-        _auth: Option<L2Auth>,
+        auth: Option<L2Auth>,
         dry_run: bool,
         proxy_url: Option<&str>,
     ) -> Result<Arc<Self>> {
         let mut headers = HeaderMap::new();
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        // L2 auth headers would be added per-request since they include an
-        // HMAC over the request body + timestamp. See `sign_request`.
 
         let mut builder = Client::builder()
             .pool_idle_timeout(Duration::from_secs(90))
@@ -72,7 +76,6 @@ impl ClobClient {
             info!(proxy, "CLOB client using proxy");
             let p = reqwest::Proxy::all(proxy).context("invalid proxy URL")?;
             builder = builder.proxy(p);
-            // HTTP/2 prior knowledge doesn't work through SOCKS proxies
         } else {
             builder = builder
                 .http2_prior_knowledge()
@@ -83,12 +86,18 @@ impl ClobClient {
 
         let inner = builder.build().context("reqwest client build")?;
 
-        info!(base_url, dry_run, "CLOB client ready");
+        info!(
+            base_url,
+            dry_run,
+            has_auth = auth.is_some(),
+            "CLOB client ready"
+        );
 
         Ok(Arc::new(Self {
             inner,
             base_url,
             owner,
+            auth,
             dry_run,
         }))
     }
@@ -97,27 +106,80 @@ impl ClobClient {
         self.dry_run
     }
 
+    /// Build L2 auth headers for a request.
+    /// Returns empty headers if no auth is configured.
+    fn l2_headers(&self, method: &str, path: &str, body: Option<&str>) -> HeaderMap {
+        let auth = match &self.auth {
+            Some(a) => a,
+            None => return HeaderMap::new(),
+        };
+
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let ts_str = timestamp.to_string();
+
+        // Build HMAC message: timestamp + method + path [+ body]
+        let mut message = format!("{}{}{}", ts_str, method, path);
+        if let Some(b) = body {
+            message.push_str(b);
+        }
+
+        // Decode base64 secret, compute HMAC-SHA256, encode result as base64
+        let secret_bytes = URL_SAFE
+            .decode(&auth.api_secret)
+            .unwrap_or_default();
+        let signature = if let Ok(mut mac) = HmacSha256::new_from_slice(&secret_bytes) {
+            mac.update(message.as_bytes());
+            URL_SAFE.encode(mac.finalize().into_bytes())
+        } else {
+            warn!("failed to create HMAC from secret");
+            String::new()
+        };
+
+        let mut headers = HeaderMap::new();
+        if let Ok(v) = HeaderValue::from_str(&self.owner) {
+            headers.insert("POLY_ADDRESS", v);
+        }
+        if let Ok(v) = HeaderValue::from_str(&auth.api_key) {
+            headers.insert("POLY_API_KEY", v);
+        }
+        if let Ok(v) = HeaderValue::from_str(&auth.api_passphrase) {
+            headers.insert("POLY_PASSPHRASE", v);
+        }
+        if let Ok(v) = HeaderValue::from_str(&ts_str) {
+            headers.insert("POLY_TIMESTAMP", v);
+        }
+        if let Ok(v) = HeaderValue::from_str(&signature) {
+            headers.insert("POLY_SIGNATURE", v);
+        }
+        headers
+    }
+
     /// POST /order. Returns the CLOB-assigned order id on success.
-    ///
-    /// In `dry_run` mode we do NOT hit the network — we return a
-    /// deterministic `"dryrun-<salt>"` id and log the payload at debug.
     pub async fn post_order(&self, order: &SignedOrder) -> Result<String> {
         if self.dry_run {
             debug!(asset = %order.token_id, side = %order.side, "dry-run post_order");
             return Ok(format!("dryrun-{}", order.salt));
         }
 
-        let url = format!("{}/order", self.base_url);
+        let path = "/order";
+        let url = format!("{}{}", self.base_url, path);
         let body = PostOrderBody {
             order,
             owner: &self.owner,
             order_type: "GTC",
         };
+        let body_json = serde_json::to_string(&body).context("serialize order body")?;
+
+        let headers = self.l2_headers("POST", path, Some(&body_json));
 
         let resp = self
             .inner
             .post(&url)
-            .json(&body)
+            .headers(headers)
+            .body(body_json)
             .send()
             .await
             .context("http post failed")?;
@@ -129,8 +191,6 @@ impl ClobClient {
             return Err(anyhow!("post_order {}: {}", status, text));
         }
 
-        // Polymarket returns { "success": true, "orderID": "0x..." }
-        // Parse defensively without pulling in a full schema.
         #[derive(serde::Deserialize)]
         struct Resp {
             #[serde(rename = "orderID")]
@@ -159,10 +219,14 @@ impl ClobClient {
             debug!(id = clob_id, "dry-run cancel_order");
             return Ok(());
         }
-        let url = format!("{}/order/{}", self.base_url, clob_id);
+        let path = format!("/order/{}", clob_id);
+        let url = format!("{}{}", self.base_url, path);
+        let headers = self.l2_headers("DELETE", &path, None);
+
         let resp = self
             .inner
             .delete(&url)
+            .headers(headers)
             .send()
             .await
             .context("cancel_order send")?;
@@ -180,13 +244,15 @@ impl ClobClient {
         if self.dry_run {
             return Ok(Vec::new());
         }
-        let url = format!("{}/orders", self.base_url);
-        let resp = self.inner.get(&url).send().await?;
+        let path = "/orders";
+        let url = format!("{}{}", self.base_url, path);
+        let headers = self.l2_headers("GET", path, None);
+
+        let resp = self.inner.get(&url).headers(headers).send().await?;
         if !resp.status().is_success() {
             return Err(anyhow!("list_open_orders {}", resp.status()));
         }
         let body = resp.text().await?;
-        // {"data": [{"id":"0x...",...},...]}
         #[derive(serde::Deserialize)]
         struct Item {
             id: String,

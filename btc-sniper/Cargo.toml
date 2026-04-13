@@ -85,6 +85,8 @@ once_cell = "1.19"
 rand     = "0.8"
 hex      = "0.4"
 sha2     = "0.10"
+hmac     = "0.12"
+base64   = "0.22"
 
 # --- internal crates ---------------------------------------------------------
 sniper-feed      = { path = "crates/feed" }

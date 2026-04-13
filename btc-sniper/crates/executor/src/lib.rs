@@ -21,7 +21,7 @@ pub mod latency;
 pub mod manager;
 pub mod order;
 
-pub use client::ClobClient;
+pub use client::{ClobClient, L2Auth};
 pub use latency::{LatencyStage, LatencyStats};
 pub use manager::{OrderManager, OrderManagerConfig};
 pub use order::{Order, OrderId, OrderState, OrderTemplate};
