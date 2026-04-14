@@ -12,7 +12,7 @@
 use std::collections::HashSet;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use parking_lot::RwLock;
 
@@ -405,12 +405,159 @@ async fn discovery_loop(
     }
 }
 
+// ---------- derive-api-key subcommand ----------------------------------------
+
+/// Derive Polymarket L2 CLOB API credentials from wallet private key.
+///
+/// Calls POST /auth/derive-api-key with an EIP-712 signed message proving
+/// wallet ownership. Prints the resulting credentials to stdout and optionally
+/// appends them to .env.
+async fn derive_api_key() -> Result<()> {
+    use ethers::abi::encode;
+    use ethers::types::{Address, U256};
+    use ethers::utils::keccak256;
+    use k256::ecdsa::{SigningKey, VerifyingKey};
+
+    let key_hex = std::env::var("POLYMARKET_PRIVATE_KEY")
+        .map_err(|_| anyhow!("POLYMARKET_PRIVATE_KEY not set in .env"))?;
+    let key_hex = key_hex.strip_prefix("0x").unwrap_or(&key_hex);
+    if key_hex.chars().all(|c| c == '0') {
+        return Err(anyhow!(
+            "POLYMARKET_PRIVATE_KEY is the zero placeholder — set your real key in .env"
+        ));
+    }
+    let key_bytes = hex::decode(key_hex).map_err(|e| anyhow!("bad hex in private key: {}", e))?;
+    let sk = SigningKey::from_slice(&key_bytes).map_err(|e| anyhow!("invalid key: {}", e))?;
+
+    // Derive wallet address from signing key
+    let vk = VerifyingKey::from(&sk);
+    let pk = vk.to_encoded_point(false);
+    let hash = keccak256(&pk.as_bytes()[1..]);
+    let address = format!("0x{}", hex::encode(&hash[12..]));
+    eprintln!("Wallet address: {}", address);
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let ts_str = timestamp.to_string();
+    let nonce: u64 = 0;
+
+    // EIP-712 domain separator for ClobAuthDomain
+    let domain_type = "EIP712Domain(string name,string version,uint256 chainId)";
+    let domain_sep = keccak256(encode(&[
+        ethers::abi::Token::FixedBytes(keccak256(domain_type).to_vec()),
+        ethers::abi::Token::FixedBytes(keccak256("ClobAuthDomain").to_vec()),
+        ethers::abi::Token::FixedBytes(keccak256("1").to_vec()),
+        ethers::abi::Token::Uint(U256::from(137u64)),
+    ]));
+
+    // EIP-712 struct hash for ClobAuth
+    let struct_type =
+        "ClobAuth(address address,string timestamp,uint256 nonce,string message)";
+    let addr: Address = address.parse().map_err(|_| anyhow!("bad derived address"))?;
+    let struct_hash = keccak256(encode(&[
+        ethers::abi::Token::FixedBytes(keccak256(struct_type).to_vec()),
+        ethers::abi::Token::Address(addr),
+        ethers::abi::Token::FixedBytes(keccak256(ts_str.as_bytes()).to_vec()),
+        ethers::abi::Token::Uint(U256::from(nonce)),
+        ethers::abi::Token::FixedBytes(keccak256(b"").to_vec()),
+    ]));
+
+    // EIP-712 digest: \x19\x01 + domainSep + structHash
+    let mut digest_input = Vec::with_capacity(66);
+    digest_input.extend_from_slice(b"\x19\x01");
+    digest_input.extend_from_slice(&domain_sep);
+    digest_input.extend_from_slice(&struct_hash);
+    let digest = keccak256(&digest_input);
+
+    // Sign with k256 (same pattern as order.rs)
+    let (ecdsa_sig, rec_id) = sk
+        .sign_prehash_recoverable(&digest)
+        .map_err(|e| anyhow!("signing failed: {}", e))?;
+    let (r_bytes, s_bytes) = ecdsa_sig.split_bytes();
+    let v = u8::from(rec_id) + 27;
+    let mut sig_bytes = Vec::with_capacity(65);
+    sig_bytes.extend_from_slice(r_bytes.as_ref());
+    sig_bytes.extend_from_slice(s_bytes.as_ref());
+    sig_bytes.push(v);
+    let sig_hex = format!("0x{}", hex::encode(&sig_bytes));
+
+    // POST to CLOB
+    let host = env_str("POLYMARKET_HOST", "https://clob.polymarket.com");
+    let url = format!("{}/auth/derive-api-key", host);
+    eprintln!("Requesting L2 API key from {} ...", url);
+
+    let body = serde_json::json!({
+        "address": address,
+        "timestamp": ts_str,
+        "nonce": nonce,
+        "message": "",
+        "signature": sig_hex,
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| anyhow!("HTTP request failed: {}", e))?;
+
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(anyhow!("CLOB returned {}: {}", status, text));
+    }
+
+    let creds: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| anyhow!("bad JSON response: {}: {}", e, text))?;
+
+    let api_key = creds["apiKey"].as_str().unwrap_or("");
+    let api_secret = creds["secret"].as_str().unwrap_or("");
+    let api_passphrase = creds["passphrase"].as_str().unwrap_or("");
+
+    if api_key.is_empty() {
+        return Err(anyhow!("empty apiKey in response: {}", text));
+    }
+
+    println!();
+    println!("=== Polymarket L2 API Credentials ===");
+    println!("CLOB_API_KEY={}", api_key);
+    println!("CLOB_SECRET={}", api_secret);
+    println!("CLOB_PASSPHRASE={}", api_passphrase);
+    println!();
+
+    // Append to .env if it exists
+    let env_path = std::path::Path::new(".env");
+    if env_path.exists() {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new().append(true).open(env_path)?;
+        writeln!(f)?;
+        writeln!(f, "# L2 credentials (derived {})", ts_str)?;
+        writeln!(f, "CLOB_API_KEY={}", api_key)?;
+        writeln!(f, "CLOB_SECRET={}", api_secret)?;
+        writeln!(f, "CLOB_PASSPHRASE={}", api_passphrase)?;
+        writeln!(f, "POLYMARKET_OWNER={}", address)?;
+        eprintln!("Appended credentials to .env");
+    } else {
+        eprintln!("No .env file found — copy the values above manually.");
+    }
+
+    Ok(())
+}
+
 // ---------- main -------------------------------------------------------------
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     // Load .env if present (dev convenience; systemd uses EnvironmentFile)
     dotenvy::dotenv().ok();
+
+    // --- subcommands (run before tracing init) --------------------------------
+    if std::env::args().nth(1).as_deref() == Some("derive-api-key") {
+        return derive_api_key().await;
+    }
 
     // --- tracing subscriber: JSON logs + in-memory ring for dashboard ---
     let logs = LogRing::new(256);
