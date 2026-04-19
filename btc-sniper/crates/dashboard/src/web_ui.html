@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BTC Sniper</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0d1117;--panel:#161b22;--border:#30363d;
+  --accent:#58a6ff;--green:#3fb950;--red:#f85149;--yellow:#d29922;
+  --dim:#6e7681;--text:#c9d1d9;--bright:#f0f6fc;
+  --panel-r:8px;
+}
+body{background:var(--bg);color:var(--text);font:13px/1.5 'SF Mono','Cascadia Code','Fira Code',monospace;min-height:100vh}
+a{color:var(--accent);text-decoration:none}
+
+/* Header */
+.header{display:flex;align-items:center;gap:16px;padding:12px 20px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.logo{font-size:15px;font-weight:700;color:var(--accent);letter-spacing:1px}
+.badge{padding:2px 10px;border-radius:4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+.badge-mode{background:var(--dim);color:var(--bg)}
+.badge-live{background:var(--green);color:var(--bg)}
+.badge-paused{background:var(--yellow);color:var(--bg)}
+.badge-killed{background:var(--red);color:var(--bg)}
+.badge-dry{background:var(--yellow);color:var(--bg)}
+.header-stat{color:var(--dim);font-size:12px}
+.header-stat b{color:var(--text);font-weight:600}
+.header-right{margin-left:auto;display:flex;gap:8px;align-items:center}
+.btn{padding:5px 14px;border:1px solid var(--border);border-radius:6px;background:var(--panel);color:var(--text);font:inherit;font-size:12px;cursor:pointer;transition:all .15s}
+.btn:hover{border-color:var(--accent);color:var(--bright)}
+.btn-danger{border-color:var(--red);color:var(--red)}
+.btn-danger:hover{background:var(--red);color:var(--bg)}
+
+/* Grid */
+.grid{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:auto auto auto;gap:12px;padding:12px 20px 20px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+
+/* Panels */
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--panel-r);overflow:hidden}
+.panel-head{padding:8px 14px;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--accent);display:flex;justify-content:space-between;align-items:center}
+.panel-head .sub{color:var(--dim);font-weight:400;text-transform:none;letter-spacing:0}
+.panel-body{padding:10px 14px;max-height:320px;overflow-y:auto}
+
+/* Tables */
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;color:var(--dim);font-weight:600;padding:4px 8px 6px;border-bottom:1px solid var(--border);font-size:11px;text-transform:uppercase;letter-spacing:.5px;position:sticky;top:0;background:var(--panel)}
+td{padding:4px 8px;border-bottom:1px solid rgba(48,54,61,.4)}
+tr:last-child td{border-bottom:none}
+.r{text-align:right}
+.buy{color:var(--green);font-weight:600}
+.sell{color:var(--red);font-weight:600}
+
+/* BTC card */
+.btc-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 20px}
+.btc-item{display:flex;justify-content:space-between}
+.btc-label{color:var(--dim);font-size:12px}
+.btc-val{font-size:12px;color:var(--text);font-weight:500}
+.btc-price{font-size:22px;font-weight:700;color:var(--bright);margin-bottom:8px}
+.btc-source{font-size:11px;color:var(--dim);margin-bottom:10px}
+
+/* Momentum bar */
+.mom-track{height:6px;background:var(--border);border-radius:3px;position:relative;margin:8px 0 4px}
+.mom-center{position:absolute;left:50%;top:-2px;width:1px;height:10px;background:var(--dim)}
+.mom-fill{position:absolute;top:0;height:100%;border-radius:3px;transition:all .3s}
+.mom-label{display:flex;justify-content:space-between;font-size:11px;color:var(--dim)}
+
+/* P&L */
+.pnl-pos{color:var(--green);font-weight:700}
+.pnl-neg{color:var(--red);font-weight:700}
+.pnl-zero{color:var(--dim);font-weight:700}
+
+/* Strategy params */
+.strat-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px}
+.strat-item{display:flex;justify-content:space-between;padding:2px 0}
+.strat-item .k{color:var(--dim);font-size:12px}
+.strat-item .v{color:var(--text);font-size:12px;font-weight:500}
+
+/* Latency colors */
+.lat-fast{color:var(--green)}
+.lat-mid{color:var(--yellow)}
+.lat-slow{color:var(--red)}
+
+/* Logs */
+.log-line{font-size:11px;line-height:1.7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.log-age{color:var(--dim);display:inline-block;width:40px}
+.log-lvl{display:inline-block;width:32px;font-weight:700}
+.log-ERR{color:var(--red)}.log-WRN{color:var(--yellow)}.log-INF{color:var(--green)}.log-DBG{color:var(--dim)}
+.log-msg{color:var(--text)}
+
+/* Fill bar */
+.fill-track{display:inline-block;width:60px;height:6px;background:var(--border);border-radius:3px;vertical-align:middle;margin-right:4px}
+.fill-bar{height:100%;border-radius:3px;background:var(--accent);transition:width .3s}
+
+/* State badges */
+.st{font-size:10px;padding:1px 6px;border-radius:3px;font-weight:600}
+.st-Acked{background:rgba(88,166,255,.15);color:var(--accent)}
+.st-Filled{background:rgba(63,185,80,.15);color:var(--green)}
+.st-PartialFill{background:rgba(210,153,34,.15);color:var(--yellow)}
+.st-Pending{background:rgba(110,118,129,.15);color:var(--dim)}
+.st-Rejected{background:rgba(248,81,73,.15);color:var(--red)}
+.st-Cancelled{background:rgba(248,81,73,.1);color:var(--dim)}
+
+/* Footer */
+.footer{padding:8px 20px;border-top:1px solid var(--border);font-size:11px;color:var(--dim);display:flex;gap:16px}
+.footer kbd{background:var(--panel);border:1px solid var(--border);border-radius:3px;padding:0 5px;font-size:10px;color:var(--accent)}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header" id="header">
+  <span class="logo">BTC SNIPER</span>
+  <span class="badge badge-mode" id="h-mode">—</span>
+  <span class="badge badge-live" id="h-status">—</span>
+  <span class="badge badge-dry" id="h-dry" style="display:none">DRY RUN</span>
+  <span class="header-stat">BTC <b id="h-btc">—</b></span>
+  <span class="header-stat">uptime <b id="h-uptime">—</b></span>
+  <span class="header-stat">ws <b id="h-ws">0</b></span>
+  <span class="header-stat">fills <b id="h-fills">0</b></span>
+  <span class="header-stat">open <b id="h-open">0</b></span>
+  <div class="header-right">
+    <button class="btn" id="btn-pause" onclick="doPause()">Pause</button>
+    <button class="btn btn-danger" id="btn-kill" onclick="doKill()">Kill Switch</button>
+  </div>
+</div>
+
+<!-- GRID -->
+<div class="grid">
+
+  <!-- ORDER BOOK -->
+  <div class="panel">
+    <div class="panel-head">Order Book <span class="sub" id="book-count">0 markets</span></div>
+    <div class="panel-body" id="book-body">
+      <table>
+        <thead><tr><th>Asset</th><th class="r">Bid</th><th class="r">Ask</th><th class="r">Mid</th><th class="r">Spread</th><th class="r">Imb</th></tr></thead>
+        <tbody id="book-rows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- BTC FEED -->
+  <div class="panel">
+    <div class="panel-head">BTC Feed <span class="sub" id="btc-source">—</span></div>
+    <div class="panel-body" id="btc-body">
+      <div class="btc-price" id="btc-price">$—</div>
+      <div class="btc-grid">
+        <div class="btc-item"><span class="btc-label">VWAP 15s</span><span class="btc-val" id="btc-vwap15">—</span></div>
+        <div class="btc-item"><span class="btc-label">VWAP 60s</span><span class="btc-val" id="btc-vwap60">—</span></div>
+        <div class="btc-item"><span class="btc-label">EMA fast</span><span class="btc-val" id="btc-ema-fast">—</span></div>
+        <div class="btc-item"><span class="btc-label">EMA slow</span><span class="btc-val" id="btc-ema-slow">—</span></div>
+        <div class="btc-item"><span class="btc-label">Trades</span><span class="btc-val" id="btc-trades">0</span></div>
+        <div class="btc-item"><span class="btc-label">P(up)</span><span class="btc-val" id="btc-pup">—</span></div>
+      </div>
+      <div style="margin-top:10px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline">
+          <span class="btc-label">Momentum</span>
+          <span class="btc-val" id="btc-mom-val" style="font-weight:700">0.000</span>
+        </div>
+        <div class="mom-track"><div class="mom-center"></div><div class="mom-fill" id="mom-fill"></div></div>
+        <div class="mom-label"><span>bearish</span><span>neutral</span><span>bullish</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ORDERS -->
+  <div class="panel">
+    <div class="panel-head">
+      Orders
+      <span class="sub">
+        PnL: <span id="ord-pnl" class="pnl-zero">$0.00</span>
+        &nbsp; daily: <span id="ord-daily" class="pnl-zero">$0.00</span>
+      </span>
+    </div>
+    <div class="panel-body" style="max-height:260px">
+      <table>
+        <thead><tr><th>ID</th><th>Asset</th><th>Side</th><th class="r">Price</th><th class="r">Size</th><th>Fill</th><th>State</th></tr></thead>
+        <tbody id="order-rows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- WALLET + STRATEGY + LATENCY stacked -->
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <!-- WALLET -->
+    <div class="panel">
+      <div class="panel-head">Wallet</div>
+      <div class="panel-body" id="wallet-body">
+        <div class="strat-grid">
+          <div class="strat-item"><span class="k">Address</span><span class="v" id="w-addr" style="font-size:10px;word-break:break-all">—</span></div>
+          <div class="strat-item"><span class="k">USDC (Polygon)</span><span class="v" id="w-bal" style="font-size:16px;font-weight:700;color:var(--bright)">—</span></div>
+        </div>
+        <div id="w-error" style="color:var(--yellow);font-size:11px;margin-top:6px"></div>
+      </div>
+    </div>
+
+    <!-- STRATEGY -->
+    <div class="panel">
+      <div class="panel-head">Strategy</div>
+      <div class="panel-body" id="strat-body">
+        <div class="strat-grid" id="strat-grid"></div>
+      </div>
+    </div>
+
+    <!-- LATENCY -->
+    <div class="panel">
+      <div class="panel-head">Latency</div>
+      <div class="panel-body" style="padding:6px 14px">
+        <table>
+          <thead><tr><th>Stage</th><th class="r">Count</th><th class="r">P50</th><th class="r">P99</th><th class="r">P999</th></tr></thead>
+          <tbody id="lat-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- LOGS (full width) -->
+  <div class="panel" style="grid-column:1/-1">
+    <div class="panel-head">Log Stream <span class="sub" id="log-count">0 entries</span></div>
+    <div class="panel-body" style="max-height:200px" id="log-body"></div>
+  </div>
+</div>
+
+<!-- FOOTER -->
+<div class="footer">
+  <span><kbd>P</kbd> pause/resume</span>
+  <span><kbd>K</kbd> kill switch</span>
+  <span>polling every 1s</span>
+  <span style="margin-left:auto" id="foot-conn">connecting...</span>
+</div>
+
+<script>
+const $ = s => document.getElementById(s);
+let S = {}; // latest status
+
+function fmt(n, d=2) { return n != null ? n.toFixed(d) : '—'; }
+function fmtUsd(n) { return n != null ? '$' + n.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) : '—'; }
+function fmtTime(s) {
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = s%60;
+  return `${h}h ${m}m ${sec}s`;
+}
+
+function pnlClass(v) { return v > 0.01 ? 'pnl-pos' : v < -0.01 ? 'pnl-neg' : 'pnl-zero'; }
+
+function latClass(us) { return us < 100 ? 'lat-fast' : us < 1000 ? 'lat-mid' : 'lat-slow'; }
+
+async function fetchJson(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+
+let walletTick = 0;
+async function refresh() {
+  try {
+    const fetches = [
+      fetchJson('/api/status'),
+      fetchJson('/api/book'),
+      fetchJson('/api/orders'),
+      fetchJson('/api/latency'),
+      fetchJson('/api/logs'),
+    ];
+    // Fetch wallet every 10s (not every 1s)
+    if (walletTick % 10 === 0) fetches.push(fetchJson('/api/wallet'));
+    walletTick++;
+    const [status, book, orders, latency, logs, wallet] = await Promise.all(fetches);
+    S = status;
+    renderHeader(status);
+    renderBook(book);
+    renderBtc(status);
+    renderOrders(orders, status);
+    renderStrategy(status);
+    renderLatency(latency);
+    if (wallet) renderWallet(wallet);
+    renderLogs(logs);
+    $('foot-conn').textContent = 'connected';
+    $('foot-conn').style.color = 'var(--green)';
+  } catch (e) {
+    $('foot-conn').textContent = 'disconnected: ' + e.message;
+    $('foot-conn').style.color = 'var(--red)';
+  }
+}
+
+function renderHeader(s) {
+  $('h-mode').textContent = s.mode.toUpperCase();
+  const st = $('h-status');
+  st.textContent = s.status.toUpperCase();
+  st.className = 'badge badge-' + s.status;
+  if (s.dry_run) { $('h-dry').style.display = ''; } else { $('h-dry').style.display = 'none'; }
+  $('h-btc').textContent = fmtUsd(s.btc_last);
+  $('h-btc').style.color = s.btc_momentum > 0.1 ? 'var(--green)' : s.btc_momentum < -0.1 ? 'var(--red)' : 'var(--text)';
+  $('h-uptime').textContent = fmtTime(s.uptime_secs);
+  $('h-ws').textContent = s.ws_messages.toLocaleString();
+  $('h-fills').textContent = s.fills_total;
+  $('h-open').textContent = s.open_orders;
+  $('btn-pause').textContent = s.paused ? 'Resume' : 'Pause';
+  if (s.killed) {
+    $('btn-kill').disabled = true;
+    $('btn-kill').textContent = 'KILLED';
+  }
+}
+
+function renderBook(book) {
+  $('book-count').textContent = book.length + ' market' + (book.length !== 1 ? 's' : '');
+  const tb = $('book-rows');
+  if (book.length === 0) {
+    tb.innerHTML = '<tr><td colspan="6" style="color:var(--dim);text-align:center">waiting for markets...</td></tr>';
+    return;
+  }
+  let html = '';
+  for (const b of book) {
+    const sc = b.spread_bps < 100 ? 'var(--green)' : b.spread_bps < 300 ? 'var(--yellow)' : 'var(--red)';
+    const ic = b.imbalance > 0.3 ? 'var(--green)' : b.imbalance < -0.3 ? 'var(--red)' : 'var(--dim)';
+    html += `<tr>
+      <td>${b.asset}</td>
+      <td class="r buy">$${fmt(b.bid_size,0)} @ ${fmt(b.bid_price*100,1)}c</td>
+      <td class="r sell">$${fmt(b.ask_size,0)} @ ${fmt(b.ask_price*100,1)}c</td>
+      <td class="r">${fmt(b.mid*100,1)}c</td>
+      <td class="r" style="color:${sc}">${b.spread_bps}bp</td>
+      <td class="r" style="color:${ic}">${b.imbalance > 0 ? '+' : ''}${fmt(b.imbalance,2)}</td>
+    </tr>`;
+  }
+  tb.innerHTML = html;
+}
+
+function renderBtc(s) {
+  $('btc-source').textContent = 'via ' + s.btc_source;
+  const pc = s.btc_momentum > 0.05 ? 'var(--green)' : s.btc_momentum < -0.05 ? 'var(--red)' : 'var(--bright)';
+  $('btc-price').textContent = fmtUsd(s.btc_last);
+  $('btc-price').style.color = pc;
+  $('btc-vwap15').textContent = fmtUsd(s.btc_vwap_15s);
+  $('btc-vwap60').textContent = fmtUsd(s.btc_vwap_60s);
+  $('btc-ema-fast').textContent = fmtUsd(s.btc_ema_fast);
+  $('btc-ema-slow').textContent = fmtUsd(s.btc_ema_slow);
+  $('btc-trades').textContent = s.btc_trades.toLocaleString();
+
+  const pup = s.btc_direction_prob;
+  const pupC = pup > 0.55 ? 'var(--green)' : pup < 0.45 ? 'var(--red)' : 'var(--dim)';
+  $('btc-pup').textContent = fmt(pup * 100, 1) + '%';
+  $('btc-pup').style.color = pupC;
+
+  const mom = s.btc_momentum;
+  const mc = mom > 0.1 ? 'var(--green)' : mom < -0.1 ? 'var(--red)' : 'var(--dim)';
+  $('btc-mom-val').textContent = (mom >= 0 ? '+' : '') + fmt(mom, 4);
+  $('btc-mom-val').style.color = mc;
+
+  const fill = $('mom-fill');
+  const pct = Math.min(Math.abs(mom), 1) * 50;
+  if (mom >= 0) {
+    fill.style.left = '50%';
+    fill.style.right = 'auto';
+    fill.style.width = pct + '%';
+    fill.style.background = 'var(--green)';
+  } else {
+    fill.style.right = '50%';
+    fill.style.left = 'auto';
+    fill.style.width = pct + '%';
+    fill.style.background = 'var(--red)';
+  }
+}
+
+function renderOrders(orders, s) {
+  const pc = pnlClass(s.pnl_usdc);
+  $('ord-pnl').textContent = (s.pnl_usdc >= 0 ? '+' : '') + fmt(s.pnl_usdc) + ' USDC';
+  $('ord-pnl').className = pc;
+  const dc = pnlClass(s.daily_pnl_usdc);
+  $('ord-daily').textContent = (s.daily_pnl_usdc >= 0 ? '+' : '') + fmt(s.daily_pnl_usdc) + ' USDC';
+  $('ord-daily').className = dc;
+
+  const tb = $('order-rows');
+  if (orders.length === 0) {
+    tb.innerHTML = '<tr><td colspan="7" style="color:var(--dim);text-align:center">no orders</td></tr>';
+    return;
+  }
+  let html = '';
+  for (const o of orders) {
+    const sc = o.side === 'Buy' ? 'buy' : 'sell';
+    const fp = Math.min(o.fill_pct, 100);
+    html += `<tr>
+      <td>${o.id}</td>
+      <td>${o.asset}</td>
+      <td class="${sc}">${o.side}</td>
+      <td class="r">${fmt(o.price*100,1)}c</td>
+      <td class="r">$${fmt(o.size_usdc,0)}</td>
+      <td><span class="fill-track"><span class="fill-bar" style="width:${fp}%"></span></span>${fmt(fp,0)}%</td>
+      <td><span class="st st-${o.state}">${o.state}</span></td>
+    </tr>`;
+  }
+  tb.innerHTML = html;
+}
+
+function renderStrategy(s) {
+  const g = $('strat-grid');
+  let items = [];
+  if (s.mode === 'maker') {
+    items = [
+      ['Mode', 'MARKET MAKER'],
+      ['Half spread', s.maker_half_spread_bps + 'bp (' + fmt(s.maker_half_spread_bps/100,1) + '% ea)'],
+      ['Quote size', '$' + fmt(s.maker_quote_size_usdc, 0)],
+      ['Max inventory', '$' + fmt(s.maker_max_inventory_usdc, 0)],
+      ['Positions', s.open_positions + ' / ' + s.max_positions],
+      ['Dry run', s.dry_run ? 'Yes' : 'No'],
+    ];
+  } else {
+    items = [
+      ['Mode', 'TAKER (SNIPER)'],
+      ['Min edge', s.min_edge_bps + 'bp (' + fmt(s.min_edge_bps/100,1) + '%)'],
+      ['TX cost', s.tx_cost_bps + 'bp'],
+      ['Net edge needed', (s.min_edge_bps + s.tx_cost_bps) + 'bp'],
+      ['Positions', s.open_positions + ' / ' + s.max_positions],
+      ['Dry run', s.dry_run ? 'Yes' : 'No'],
+    ];
+  }
+  g.innerHTML = items.map(([k,v]) => `<div class="strat-item"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('');
+}
+
+function renderLatency(lat) {
+  const tb = $('lat-rows');
+  let html = '';
+  for (const l of lat) {
+    html += `<tr>
+      <td>${l.stage}</td>
+      <td class="r">${l.count.toLocaleString()}</td>
+      <td class="r ${latClass(l.p50_us)}">${l.p50_us}µs</td>
+      <td class="r ${latClass(l.p99_us)}">${l.p99_us}µs</td>
+      <td class="r ${latClass(l.p999_us)}">${l.p999_us}µs</td>
+    </tr>`;
+  }
+  tb.innerHTML = html;
+}
+
+function renderLogs(logs) {
+  $('log-count').textContent = logs.length + ' entries';
+  const el = $('log-body');
+  const wasAtBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
+  let html = '';
+  for (const l of logs) {
+    const age = l.age_secs < 60 ? l.age_secs + 's' : Math.floor(l.age_secs/60) + 'm';
+    const tag = l.level === 'ERROR' ? 'ERR' : l.level === 'WARN' ? 'WRN' : l.level === 'INFO' ? 'INF' : 'DBG';
+    html += `<div class="log-line"><span class="log-age">${age}</span><span class="log-lvl log-${tag}">${tag}</span><span class="log-msg">${escHtml(l.message)}</span></div>`;
+  }
+  el.innerHTML = html;
+  if (wasAtBottom) el.scrollTop = el.scrollHeight;
+}
+
+function renderWallet(w) {
+  const addr = w.address || '—';
+  $('w-addr').textContent = addr.length > 10 ? addr.slice(0,6) + '...' + addr.slice(-4) : addr;
+  $('w-addr').title = addr;
+  if (w.usdc_balance != null) {
+    $('w-bal').textContent = '$' + w.usdc_balance.toFixed(2);
+    $('w-bal').style.color = w.usdc_balance > 0 ? 'var(--bright)' : 'var(--red)';
+    $('w-error').textContent = '';
+  } else {
+    $('w-bal').textContent = '—';
+    $('w-error').textContent = w.error || '';
+  }
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+async function doPause() {
+  await fetch('/api/pause', {method:'POST'});
+  refresh();
+}
+async function doKill() {
+  if (!confirm('Latch kill switch? All orders will be cancelled and no new orders placed until restart.')) return;
+  await fetch('/api/kill', {method:'POST'});
+  refresh();
+}
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if (e.key === 'p' || e.key === 'P') doPause();
+  if (e.key === 'k' || e.key === 'K') doKill();
+});
+
+// Poll loop
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>

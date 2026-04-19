@@ -1,0 +1,22 @@
+[package]
+name         = "sniper-risk"
+version      = { workspace = true }
+edition      = { workspace = true }
+rust-version = { workspace = true }
+description  = "Hard risk limits and kill switch"
+
+[dependencies]
+sniper-feed     = { workspace = true }
+sniper-signal   = { workspace = true }
+sniper-executor = { workspace = true }
+
+tokio      = { workspace = true }
+dashmap    = { workspace = true }
+parking_lot = { workspace = true }
+arc-swap   = { workspace = true }
+
+rust_decimal = { workspace = true }
+
+tracing   = { workspace = true }
+anyhow    = { workspace = true }
+thiserror = { workspace = true }

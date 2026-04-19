@@ -1,0 +1,32 @@
+# =============================================================================
+# markets.toml — BTC end-of-day / end-of-week condition IDs to monitor.
+#
+# Polymarket BTC markets are listed at:
+#   https://polymarket.com/markets?tag=crypto
+# Find the condition ID via the Gamma API:
+#   curl 'https://gamma-api.polymarket.com/markets?slug=will-btc-close-above-xyz'
+#
+# At startup, `cargo run` resolves each slug/condition to its active token IDs.
+# =============================================================================
+
+# "Will Bitcoin reach $100,000 by December 31, 2026?"
+# bid=0.35 ask=0.36 as of 2026-04-12
+# YES token: 56078938060096976448086754249497300447360333783952000147427828224794011030104
+# NO  token: 11291662904897713174667903388388696640643610556195928998276904135282270136756
+[[market]]
+name       = "BTC-100k-2026"
+slug       = "what-price-will-bitcoin-hit-before-2027"
+condition_id = "0xdaa4866bae18be58c5a79d2aeeffd035ec78f1bb49dbd88f72993997778a990f"
+target     = 100000
+resolves_at = 1798761600  # 2026-12-31T12:00:00Z
+min_edge_bps = 250
+max_position_usdc = 500
+
+# --- Global knobs ------------------------------------------------------------
+[defaults]
+# How often to resync the book from REST as a safety net
+book_resync_ms = 30_000
+# WS ping interval
+ping_interval_ms = 5_000
+# How many recent trades to keep for VWAP
+vwap_window_secs = 60

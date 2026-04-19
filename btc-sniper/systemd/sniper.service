@@ -1,0 +1,74 @@
+[Unit]
+Description=BTC Polymarket Sniper Bot
+Documentation=file:///opt/btc-sniper/README.md
+After=network-online.target chrony.service
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=sniper
+Group=sniper
+WorkingDirectory=/opt/btc-sniper
+EnvironmentFile=/opt/btc-sniper/.env
+
+# Headless mode — no TUI when running as a service
+Environment=ENABLE_TUI=false
+Environment=RUST_LOG=info,sniper=debug
+
+# Binary installed by setup.sh
+ExecStart=/usr/local/bin/sniper
+ExecStop=/bin/kill -SIGTERM $MAINPID
+
+# Graceful shutdown: give the executor 10s to cancel open orders
+KillSignal=SIGTERM
+TimeoutStopSec=10
+Restart=always
+RestartSec=2
+
+# Priority: SCHED_FIFO real-time with max priority
+CPUSchedulingPolicy=fifo
+CPUSchedulingPriority=99
+IOSchedulingClass=realtime
+IOSchedulingPriority=0
+
+# Pin to isolated trading cores (uncomment and adjust for your instance).
+# CPUAffinity=1            # 2-core instance (c6g.medium)
+# CPUAffinity=2-3          # 4-core instance
+# CPUAffinity=4-63         # 64-core c7gn.16xlarge
+
+# Memory
+LimitNOFILE=1048576
+LimitMEMLOCK=infinity
+LimitRTPRIO=99
+LimitNICE=-20
+# Adjust for your instance size (96G for c7gn.16xlarge, 2G for c6g.medium)
+MemoryMax=2G
+MemoryHigh=1G
+OOMScoreAdjust=-1000
+
+# Don't let the kernel swap us
+MemoryDenyWriteExecute=false
+
+# Hardening (tight but compatible with tokio + reqwest)
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/btc-sniper/logs /opt/btc-sniper/state
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=false
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictNamespaces=true
+
+# Structured JSON logs to journald (tracing-subscriber JSON format)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sniper
+
+[Install]
+WantedBy=multi-user.target

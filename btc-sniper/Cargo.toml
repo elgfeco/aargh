@@ -1,0 +1,118 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/feed",
+    "crates/signal",
+    "crates/executor",
+    "crates/risk",
+    "crates/dashboard",
+    "crates/main",
+]
+
+[workspace.package]
+version      = "0.1.0"
+edition      = "2021"
+rust-version = "1.75"
+license      = "MIT"
+authors      = ["btc-sniper contributors"]
+repository   = "https://github.com/elgfeco/aargh"
+
+[workspace.dependencies]
+# --- async runtime -----------------------------------------------------------
+tokio             = { version = "1.37", features = ["full", "tracing"] }
+tokio-tungstenite = { version = "0.21", features = ["rustls-tls-native-roots"] }
+tokio-util        = { version = "0.7", features = ["codec"] }
+futures           = "0.3"
+async-trait       = "0.1"
+
+# --- HTTP / WS ---------------------------------------------------------------
+reqwest = { version = "0.12", default-features = false, features = [
+    "json", "gzip", "rustls-tls", "http2", "socks"
+] }
+url     = "2.5"
+hyper   = { version = "1", features = ["client", "http2"] }
+
+# --- serialization -----------------------------------------------------------
+# simd-json is the hot path JSON parser; serde_json kept for config parsing
+simd-json  = "0.13"
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml       = "0.8"
+
+# --- lockfree / concurrency --------------------------------------------------
+crossbeam       = "0.8"
+crossbeam-queue = "0.3"
+dashmap         = "5"
+parking_lot     = "0.12"
+arc-swap        = "1.7"
+
+# --- math / trading ----------------------------------------------------------
+rust_decimal      = { version = "1.35", features = ["serde-with-str"] }
+rust_decimal_macros = "1.35"
+ordered-float     = "4.2"
+
+# --- ethereum signing (EIP-712 / L1 auth) ------------------------------------
+ethers = { version = "2", default-features = false, features = [
+    "rustls", "eip712"
+] }
+alloy-primitives = { version = "0.7", features = ["serde"] }
+
+# --- TUI ---------------------------------------------------------------------
+ratatui  = { version = "0.26", features = ["crossterm"] }
+crossterm = "0.27"
+
+# --- Web dashboard -----------------------------------------------------------
+axum        = "0.7"
+tower       = "0.4"
+tower-http  = { version = "0.5", features = ["cors"] }
+
+# --- OS / low-level ----------------------------------------------------------
+core_affinity = "0.8"
+libc          = "0.2"
+nix           = { version = "0.28", features = ["signal", "sched"] }
+bytes         = "1.6"
+
+# --- observability -----------------------------------------------------------
+tracing              = "0.1"
+tracing-subscriber   = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+hdrhistogram         = "7.5"
+
+# --- errors / config ---------------------------------------------------------
+anyhow   = "1"
+thiserror = "1"
+dotenvy  = "0.15"
+once_cell = "1.19"
+rand     = "0.8"
+hex      = "0.4"
+sha2     = "0.10"
+hmac     = "0.12"
+base64   = "0.22"
+k256     = { version = "0.13", features = ["ecdsa"] }
+
+# --- internal crates ---------------------------------------------------------
+sniper-feed      = { path = "crates/feed" }
+sniper-signal    = { path = "crates/signal" }
+sniper-executor  = { path = "crates/executor" }
+sniper-risk      = { path = "crates/risk" }
+sniper-dashboard = { path = "crates/dashboard" }
+
+# =============================================================================
+# Release profile — tuned for minimum latency, not binary size
+# =============================================================================
+[profile.release]
+opt-level        = 3
+lto              = "fat"     # whole-program inlining
+codegen-units    = 1         # maximize cross-crate inlining
+debug            = 1         # line tables for flamegraphs
+strip            = "none"
+panic            = "abort"   # smaller code, no unwinder on hot path
+overflow-checks  = false
+incremental      = false
+
+[profile.release.package."*"]
+opt-level = 3
+
+# Dev profile: still reasonably fast so we can iterate
+[profile.dev]
+opt-level = 1
+debug     = 2
